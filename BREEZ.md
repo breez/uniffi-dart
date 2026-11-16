@@ -14,6 +14,7 @@ Started from upstream main at `ab977ca`.
 | Branch | Base | What |
 |---|---|---|
 | `savage-uniffi-v0.29.4` | upstream main | Port to UniFFI 0.29.4. Breez-only. |
+| `upstream-pr-183` | upstream main | #183: roll back owned arguments when lowering fails. |
 
 ## Not taken
 
