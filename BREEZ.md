@@ -15,9 +15,12 @@ Started from upstream main at `ab977ca`.
 |---|---|---|
 | `savage-uniffi-v0.29.4` | upstream main | Port to UniFFI 0.29.4. Breez-only. |
 | `upstream-pr-183` | upstream main | #183: roll back owned arguments when lowering fails. |
+| `savage-pr-181-on-0.29` | port | #181 (wire types in callbacks), plus one 0.29 test change: a foreign trait passed through Rust comes back as a Rust-backed wrapper. |
 
 ## Not taken
 
+- #191 (Rust `Display` for error messages): needs `#[uniffi::export(Display)]`
+  on enums, which UniFFI 0.30 introduced. Its #183 commits are in via #183.
 - #193 (u64 as `int` with the full bit pattern): #188 (BigInt) was chosen instead.
 - #192 (enum return in sync callbacks): overlaps #181.
 - #186 (opt-in sync callback dispatch): in upstream main, but not enabled.
