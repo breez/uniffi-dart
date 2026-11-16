@@ -198,6 +198,7 @@ impl DartCodeOracle {
     // }
 
     pub fn type_lower_fn(ty: &Type, inner: dart::Tokens) -> dart::Tokens {
+        let inner = super::unsigned::normalize_for_lower(ty, inner);
         match ty {
             Type::Int8
             | Type::Int16
@@ -248,11 +249,11 @@ impl DartCodeOracle {
                 Type::UInt8
                 | Type::UInt16
                 | Type::UInt32
-                | Type::UInt64
                 | Type::Int8
                 | Type::Int16
                 | Type::Int32
                 | Type::Int64 => quote!(int),
+                Type::UInt64 => quote!(uniffiCore.BigInt),
                 Type::Float32 | Type::Float64 => quote!(double),
                 Type::Boolean => quote!(bool),
                 Type::Bytes => quote!(Uint8List),
@@ -385,7 +386,11 @@ impl DartCodeOracle {
         method_name: &str,
         args: Vec<dart::Tokens>,
     ) -> dart::Tokens {
+        let result = super::unsigned::normalize_for_lower(ret_type, quote!(result));
         match ret_type {
+            Type::Custom { builtin, .. } => {
+                Self::callback_return_handling(builtin, method_name, args)
+            }
             Type::Boolean => {
                 // For boolean return values
                 quote!(
@@ -405,7 +410,7 @@ impl DartCodeOracle {
                 let lowered = ret_type.as_codetype().ffi_converter_name();
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.value = $lowered.lower(result);
+                    outReturn.value = $lowered.lower($result);
                 )
             }
             Type::Float32 | Type::Float64 => {
@@ -421,14 +426,14 @@ impl DartCodeOracle {
                 let ffi_converter = ret_type.as_codetype().ffi_converter_name();
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.ref = $ffi_converter.lower(result);
+                    outReturn.ref = $ffi_converter.lower($result);
                 )
             }
             Type::String => {
                 // For string return values
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.ref = FfiConverterString.lower(result);
+                    outReturn.ref = FfiConverterString.lower($result);
                     status.code = CALL_SUCCESS;
                 )
             }
@@ -436,7 +441,7 @@ impl DartCodeOracle {
                 let lowered = ret_type.as_codetype().ffi_converter_name();
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.value = $lowered.lower(result);
+                    outReturn.value = $lowered.lower($result);
                 )
             }
             Type::Sequence { inner_type } => {
@@ -444,14 +449,14 @@ impl DartCodeOracle {
                     // For int32 sequence return values
                     quote!(
                         final result = obj.$method_name($(for arg in &args => $arg,));
-                        outReturn.ref = FfiConverterSequenceInt32.lower(result);
+                        outReturn.ref = FfiConverterSequenceInt32.lower($result);
                     )
                 } else {
                     // For other sequence types
                     let lowered = ret_type.as_codetype().ffi_converter_name();
                     quote!(
                         final result = obj.$method_name($(for arg in &args => $arg,));
-                        outReturn.ref = $lowered.lower(result);
+                        outReturn.ref = $lowered.lower($result);
                     )
                 }
             }
@@ -460,7 +465,7 @@ impl DartCodeOracle {
                 let lowered = ret_type.as_codetype().ffi_converter_name();
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.ref = $lowered.lower(result);
+                    outReturn.ref = $lowered.lower($result);
                 )
             }
         }
@@ -470,6 +475,7 @@ impl DartCodeOracle {
     pub fn callback_out_return_type(ret_type: Option<&Type>) -> dart::Tokens {
         if let Some(ret) = ret_type {
             match ret {
+                Type::Custom { builtin, .. } => Self::callback_out_return_type(Some(builtin)),
                 Type::UInt8 => quote!(Pointer<Uint8>),
                 Type::UInt16 => quote!(Pointer<Uint16>),
                 Type::UInt32 => quote!(Pointer<Uint32>),
