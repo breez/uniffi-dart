@@ -41,6 +41,11 @@ pub struct Config {
     asset_id: Option<String>,
     #[serde(default)]
     callback_dispatch: bool,
+    /// Deliver async callback methods, fire-and-forget sync methods and
+    /// `uniffi_free` through `NativeCallable.listener`, so Rust may invoke them
+    /// from any thread.
+    #[serde(default)]
+    callback_listeners: bool,
 }
 
 impl From<&ComponentInterface> for Config {
@@ -51,6 +56,7 @@ impl From<&ComponentInterface> for Config {
             external_packages: HashMap::new(),
             asset_id: None,
             callback_dispatch: false,
+            callback_listeners: false,
         }
     }
 }
@@ -186,6 +192,7 @@ impl<'a> DartWrapper<'a> {
     pub fn new(ci: &'a ComponentInterface, config: &'a Config) -> Self {
         let mut type_renderer = TypeHelpersRenderer::new(ci);
         type_renderer.callback_dispatch = config.callback_dispatch;
+        type_renderer.callback_listeners = config.callback_listeners;
         DartWrapper { ci, config, type_renderer }
     }
 
@@ -261,6 +268,9 @@ impl BindingGenerator for DartBindingGenerator {
         settings: &uniffi_bindgen::GenerationSettings,
         components: &[uniffi_bindgen::Component<Self::Config>],
     ) -> Result<()> {
+        if components.iter().any(|c| c.config.callback_dispatch && c.config.callback_listeners) {
+            bail!("callback_dispatch and callback_listeners are alternatives; enable only one");
+        }
         if components.iter().any(|c| c.config.callback_dispatch) {
             if components.len() != 1 {
                 bail!(
