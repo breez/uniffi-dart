@@ -153,11 +153,12 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             )})
         };
 
+        let call_status = &DartCodeOracle::call_status_name(&constructor.arguments());
         let call = DartCodeOracle::scoped_ffi_call(
             ffi_func_name,
             &constructor.arguments(),
             false,
-            if constructor.is_async() { None } else { Some(quote!(status)) },
+            if constructor.is_async() { None } else { Some(quote!($call_status)) },
             None,
         );
 
@@ -182,7 +183,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
         } else {
             constructor_definitions.push(quote! {
                 // Public constructor
-                $dart_constructor_decl($dart_params) : _ptr = rustCall((status) =>
+                $dart_constructor_decl($dart_params) : _ptr = rustCall(($call_status) =>
                     $(&call),
                     $error_handler
                 ) {
@@ -410,6 +411,7 @@ fn generate_callback_trait_rust_method(
     method: &Method,
     type_helper: &dyn TypeHelperRenderer,
 ) -> dart::Tokens {
+    let call_status = &DartCodeOracle::call_status_name(&method.arguments());
     let method_name = DartCodeOracle::fn_name(method.name());
     let dart_args = method
         .arguments()
@@ -439,7 +441,7 @@ fn generate_callback_trait_rust_method(
         method.ffi_func().name(),
         &method.arguments(),
         true,
-        if method.is_async() { None } else { Some(quote!(status)) },
+        if method.is_async() { None } else { Some(quote!($call_status)) },
         None,
     );
 
@@ -464,7 +466,7 @@ fn generate_callback_trait_rust_method(
         quote! {
             @override
             $ret $method_name($(for a in &dart_args => $a,)) {
-                return rustCall((status) {
+                return rustCall(($call_status) {
                     $(&call);
                 }, $error_handler);
             }
@@ -474,7 +476,7 @@ fn generate_callback_trait_rust_method(
             @override
             $ret $method_name($(for a in &dart_args => $a,)) {
                 return rustCallWithLifter(
-                    (status) => $(&call),
+                    ($call_status) => $(&call),
                     $lifter,
                     $error_handler
                 );
@@ -485,6 +487,7 @@ fn generate_callback_trait_rust_method(
 
 #[allow(unused_variables)]
 pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {
+    let call_status = &DartCodeOracle::call_status_name(&func.arguments());
     // if func.takes_self_by_arc() {} // TODO: Do something about this condition
     let args = if func.arguments().is_empty() {
         quote!()
@@ -517,7 +520,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         func.ffi_func().name(),
         &func.arguments(),
         true,
-        if func.is_async() { None } else { Some(quote!(status)) },
+        if func.is_async() { None } else { Some(quote!($call_status)) },
         None,
     );
 
@@ -541,7 +544,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     } else if ret == quote!(void) {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
-                return rustCall((status) {
+                return rustCall(($call_status) {
                     $(&call);
                 }, $error_handler);
             }
@@ -550,7 +553,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
                 return rustCallWithLifter(
-                    (status) => $(&call),
+                    ($call_status) => $(&call),
                     $lifter,
                     $error_handler
                 );

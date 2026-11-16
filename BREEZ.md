@@ -16,6 +16,7 @@ Started from upstream main at `ab977ca`.
 | `savage-uniffi-v0.29.4` | upstream main | Port to UniFFI 0.29.4. Breez-only. |
 | `upstream-pr-183` | upstream main | #183: roll back owned arguments when lowering fails. |
 | `savage-pr-181-on-0.29` | port | #181 (wire types in callbacks), plus one 0.29 test change: a foreign trait passed through Rust comes back as a Rust-backed wrapper. |
+| `upstream-pr-178` | upstream main | #178: avoid shadowing `status` arguments. The merge resolves conflicts with #181 and #183 by keeping their call structure and applying #178's names. |
 
 ## Not taken
 

@@ -9,6 +9,7 @@ use crate::gen::oracle::DartCodeOracle;
 use crate::gen::render::AsRenderable;
 
 pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {
+    let call_status = &DartCodeOracle::call_status_name(&func.arguments());
     let args = if func.arguments().is_empty() {
         quote!()
     } else {
@@ -40,7 +41,7 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         func.ffi_func().name(),
         &func.arguments(),
         false,
-        if func.is_async() { None } else { Some(quote!(status)) },
+        if func.is_async() { None } else { Some(quote!($call_status)) },
         None,
     );
 
@@ -63,12 +64,12 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         )
     } else {
         let call = if ret == quote!(void) {
-            quote!(rustCall((status) {
+            quote!(rustCall(($call_status) {
                 $(&call);
             }, $error_handler))
         } else {
             quote!(rustCallWithLifter(
-                (status) => $(&call),
+                ($call_status) => $(&call),
                 $lifter,
                 $error_handler
             ))
