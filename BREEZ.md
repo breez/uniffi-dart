@@ -18,6 +18,7 @@ Started from upstream main at `ab977ca`.
 | `savage-pr-181-on-0.29` | port | #181 (wire types in callbacks), plus one 0.29 test change: a foreign trait passed through Rust comes back as a Rust-backed wrapper. |
 | `upstream-pr-178` | upstream main | #178: avoid shadowing `status` arguments. The merge resolves conflicts with #181 and #183 by keeping their call structure and applying #178's names. |
 | `savage-fix-enum-field-error-names` | upstream main | Ours, upstreamable. Enum variant fields keep `Error` mid-name in type names (`LnurlErrorDetails`). |
+| `savage-pr-190-on-0.29` | port | Rust-future part of #190: future handles are `Uint64`, fixing the 32-bit ARM ABI. Its object-handle parts don't apply on 0.29. |
 
 ## Not taken
 
