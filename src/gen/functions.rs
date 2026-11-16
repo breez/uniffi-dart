@@ -38,17 +38,8 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
 
     // Use centralized callback-aware argument lowering
     if func.is_async() {
-        // For async methods returning objects, we need to convert the int pointer to Pointer<Void>
-        let async_lifter = if let Some(ret_type) = func.return_type() {
-            match ret_type {
-                uniffi_bindgen::interface::Type::Object { .. } => {
-                    quote!((ptr) => $lifter(Pointer<Void>.fromAddress(ptr)))
-                }
-                _ => lifter.clone(),
-            }
-        } else {
-            lifter.clone()
-        };
+        // UniFFI 0.29: async object results complete as `Pointer<Void>`, so lift directly.
+        let async_lifter = lifter.clone();
 
         quote!(
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {

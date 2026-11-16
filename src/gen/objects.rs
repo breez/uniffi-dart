@@ -172,7 +172,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
                       $(DartCodeOracle::async_poll(constructor, type_helper.get_ci())),
                       $(DartCodeOracle::async_complete(constructor, type_helper.get_ci())),
                       $(DartCodeOracle::async_free(constructor, type_helper.get_ci())),
-                      (int handle) => $cls_name._(Pointer<Void>.fromAddress(handle)),
+                      (Pointer<Void> ptr) => $cls_name._(ptr),
                       $error_handler,
                     );
                 }
@@ -222,13 +222,8 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
     }
 
     for trait_impl in obj.trait_impls() {
-        // Extract the trait name from the trait_ty Type
-        let trait_name = match &trait_impl.trait_ty {
-            uniffi_bindgen::interface::Type::Object { name, .. } => name,
-            uniffi_bindgen::interface::Type::CallbackInterface { name, .. } => name,
-            _ => continue, // Skip if it's not an Object or CallbackInterface
-        };
-        let trait_iface = DartCodeOracle::trait_interface_name(type_helper.get_ci(), trait_name);
+        let trait_iface =
+            DartCodeOracle::trait_interface_name(type_helper.get_ci(), &trait_impl.trait_name);
         if !implements.contains(&trait_iface) {
             implements.push(trait_iface);
         }
@@ -437,16 +432,8 @@ fn generate_callback_trait_rust_method(
     };
 
     if method.is_async() {
-        let async_lifter = if let Some(ret_type) = method.return_type() {
-            match ret_type {
-                uniffi_bindgen::interface::Type::Object { .. } => {
-                    quote!((ptr) => $lifter(Pointer<Void>.fromAddress(ptr)))
-                }
-                _ => lifter.clone(),
-            }
-        } else {
-            lifter.clone()
-        };
+        // UniFFI 0.29: async object results complete as `Pointer<Void>`, so lift directly.
+        let async_lifter = lifter.clone();
 
         quote! {
             @override
@@ -526,17 +513,8 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     };
 
     if func.is_async() {
-        // For async methods returning objects, we need to convert the int pointer to Pointer<Void>
-        let async_lifter = if let Some(ret_type) = func.return_type() {
-            match ret_type {
-                uniffi_bindgen::interface::Type::Object { .. } => {
-                    quote!((ptr) => $lifter(Pointer<Void>.fromAddress(ptr)))
-                }
-                _ => lifter.clone(),
-            }
-        } else {
-            lifter.clone()
-        };
+        // UniFFI 0.29: async object results complete as `Pointer<Void>`, so lift directly.
+        let async_lifter = lifter.clone();
 
         quote!(
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {
@@ -646,10 +624,6 @@ fn generate_trait_helpers(obj: &Object, type_helper: &dyn TypeHelperRenderer) ->
                     }
                 });
                 generated_hash = true;
-            }
-            UniffiTrait::Ord { .. } => {
-                // Ord trait is not currently supported in Dart bindings
-                // Skip generation for now
             }
         }
     }

@@ -118,6 +118,8 @@ impl DartCodeOracle {
                 FfiType::RustBuffer(_) => quote!(RustBuffer),
                 FfiType::ForeignBytes => quote!(ForeignBytes),
                 FfiType::Handle => quote!(Pointer<Void>),
+                // UniFFI 0.29: objects cross the FFI as `Arc` pointers.
+                FfiType::RustArcPtr(_) => quote!(Pointer<Void>),
                 FfiType::Callback(name) => quote!($(Self::ffi_callback_name(name))),
                 FfiType::Reference(inner) => quote!($(Self::ffi_type_label_by_reference(inner))),
                 _ => panic!("Unimplemented FfiType: {ret_type:?}"), // Fallback implementation
@@ -143,6 +145,8 @@ impl DartCodeOracle {
                 FfiType::RustBuffer(_) => quote!(RustBuffer),
                 FfiType::ForeignBytes => quote!(ForeignBytes),
                 FfiType::Handle => quote!(Pointer<Void>),
+                // UniFFI 0.29: objects cross the FFI as `Arc` pointers.
+                FfiType::RustArcPtr(_) => quote!(Pointer<Void>),
                 FfiType::Callback(name) => quote!($(Self::ffi_callback_name(name))),
                 FfiType::Reference(inner) => quote!($(Self::ffi_type_label_by_reference(inner))),
                 _ => panic!("Unimplemented FfiType: {ret_type:?}"), // Fallback implementation

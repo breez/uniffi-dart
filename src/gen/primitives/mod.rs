@@ -12,8 +12,7 @@ use paste::paste;
 pub use string::StringCodeType;
 pub use timestamp::TimestampCodeType;
 use uniffi_bindgen::interface::{
-    DefaultValue as InterfaceDefaultValue, Literal as InterfaceLiteral, Radix as InterfaceRadix,
-    Type as InterfaceType,
+    Literal as InterfaceLiteral, Radix as InterfaceRadix, Type as InterfaceType,
 };
 use uniffi_bindgen::pipeline::general::nodes::{
     Literal as PipelineLiteral, Radix as PipelineRadix, Type as PipelineType, TypeNode,
@@ -73,27 +72,6 @@ fn render_literal(literal: &PipelineLiteral) -> String {
     }
 }
 
-fn default_for_interface_type(ty: &InterfaceType) -> Option<String> {
-    match ty {
-        InterfaceType::Boolean => Some("false".to_string()),
-        InterfaceType::String => Some("''".to_string()),
-        InterfaceType::Int8
-        | InterfaceType::Int16
-        | InterfaceType::Int32
-        | InterfaceType::Int64
-        | InterfaceType::UInt8
-        | InterfaceType::UInt16
-        | InterfaceType::UInt32
-        | InterfaceType::UInt64 => Some("0".to_string()),
-        InterfaceType::Float32 | InterfaceType::Float64 => Some("0.0".to_string()),
-        InterfaceType::Duration => Some("Duration.zero".to_string()),
-        InterfaceType::Optional { .. } => Some("null".to_string()),
-        InterfaceType::Sequence { .. } => Some("const []".to_string()),
-        InterfaceType::Map { .. } => Some("const {}".to_string()),
-        _ => None,
-    }
-}
-
 fn render_interface_literal<F>(
     literal: &InterfaceLiteral,
     field_type: &InterfaceType,
@@ -125,20 +103,17 @@ where
     }
 }
 
+// UniFFI 0.29 has no `DefaultValue::Default` (bare `#[uniffi(default)]` arrived in 0.30),
+// so a default is always an explicit literal.
 pub(crate) fn render_interface_default_value<F>(
-    default: &InterfaceDefaultValue,
+    default: &InterfaceLiteral,
     field_type: &InterfaceType,
     enum_variant_renderer: F,
 ) -> Option<String>
 where
     F: Fn(&InterfaceType, &str) -> Option<String> + Copy,
 {
-    match default {
-        InterfaceDefaultValue::Default => default_for_interface_type(field_type),
-        InterfaceDefaultValue::Literal(literal) => {
-            render_interface_literal(literal, field_type, enum_variant_renderer)
-        }
-    }
+    render_interface_literal(default, field_type, enum_variant_renderer)
 }
 
 impl_code_type_for_primitive!(BytesCodeType, "Uint8List", "Uint8List");

@@ -445,9 +445,10 @@ pub fn generate_dart_bindings_with_options(
         // `cdylib_name` (and any per-crate config) resolve correctly — a custom
         // supplier that reads only a single file would default those and desync
         // the generated asset ids from the Native Assets build hook.
-        let config_supplier =
-            uniffi_bindgen::cargo_metadata::CrateConfigSupplier::from_cargo_metadata_command(false)
-                .context("Failed to build the crate config supplier from cargo metadata")?;
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .exec()
+            .context("Failed to run cargo metadata for the crate config supplier")?;
+        let config_supplier = uniffi_bindgen::cargo_metadata::CrateConfigSupplier::from(metadata);
 
         let out_dir =
             out_dir_override.context("an output directory is required in library mode")?;

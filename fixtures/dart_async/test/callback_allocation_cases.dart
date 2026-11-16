@@ -27,7 +27,7 @@ void main() {
       final completion =
           NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
             int data,
-            UniffiForeignFutureResultU8 result,
+            UniffiForeignFutureStructU8 result,
           ) {
             calls++;
             expect(tracker.failures, greaterThan(0));
