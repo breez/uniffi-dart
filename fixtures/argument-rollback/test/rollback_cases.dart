@@ -7,7 +7,7 @@ import 'tracking_allocator.dart' as tracker;
 
 class ReentrantConsumer implements Consumer {
   @override
-  int accept(String payload, int small) {
+  Object accept(String payload, int small) {
     expect(() => take(payload: 'nested', small: 256), throwsArgumentError);
     return take(payload: 'ok', small: small);
   }
@@ -132,7 +132,7 @@ void main() {
     tracker.calloc.reset();
     expect(
       liveObjects(),
-      0,
+      BigInt.zero,
       reason: 'every fixture object must have been destroyed',
     );
   });
@@ -149,7 +149,7 @@ void main() {
         );
       }
       expect(liveBytes(), before);
-      expect(take(payload: 'works', small: 1), 6);
+      expect(take(payload: 'works', small: 1), BigInt.from(6));
     },
   );
 
@@ -160,7 +160,7 @@ void main() {
       throwsArgumentError,
     );
     expect(liveBytes(), before);
-    expect(await takeAsync(payload: 'works', small: 1), 6);
+    expect(await takeAsync(payload: 'works', small: 1), BigInt.from(6));
   });
 
   test('failed sync and async constructors release their inputs', () async {
@@ -194,7 +194,7 @@ void main() {
         }
         expect(object.references(), refs);
         expect(liveBytes(), before);
-        expect(object.accept(payload: 'ok', small: 1), 3);
+        expect(object.accept(payload: 'ok', small: 1), BigInt.from(3));
       } finally {
         object.dispose();
       }
@@ -233,7 +233,7 @@ void main() {
             packet: Packet(objects: [object, object], small: 0),
             small: 1,
           ),
-          3,
+          BigInt.from(3),
         );
         expect(object.references(), refs);
       } finally {
@@ -256,8 +256,8 @@ void main() {
       expect(() => foreign.accept('x' * 64, 256), throwsArgumentError);
       expect(object.references(), refs);
       expect(liveBytes(), before);
-      expect(rust.accept(payload: 'ok', small: 1), 3);
-      expect(foreign.accept('ok', 1), 3);
+      expect(rust.accept(payload: 'ok', small: 1), BigInt.from(3));
+      expect(foreign.accept('ok', 1), BigInt.from(3));
     } finally {
       rust.dispose();
       // The abstract foreign trait has no disposal member.
@@ -268,7 +268,7 @@ void main() {
 
   test('native callbacks can reenter without capturing their resources', () {
     final before = liveBytes();
-    expect(takeCallback(consumer: ReentrantConsumer(), small: 1), 3);
+    expect(takeCallback(consumer: ReentrantConsumer(), small: 1), BigInt.from(3));
     expect(liveBytes(), before);
   });
 
@@ -326,14 +326,14 @@ void main() {
   test('generated temporary names do not hide user arguments', () {
     expect(
       collidingNames(uniffiArguments: 'ok', uniffiArg0: 1, uniffiArg01: 2),
-      5,
+      BigInt.from(5),
     );
   });
 
   test('direct converter callers retain ownership outside a call scope', () {
     final before = liveBytes();
     final buffer = toRustBuffer(Uint8List(64));
-    expect(liveBytes(), before + 64);
+    expect(liveBytes(), before + BigInt.from(64));
     buffer.free();
     expect(liveBytes(), before);
   });
@@ -364,7 +364,7 @@ void main() {
             );
             expect(tracker.calloc.failAfter, 0);
           } else {
-            expect(object.acceptTwo(first: 'x' * 64, second: 'y' * 32), 96);
+            expect(object.acceptTwo(first: 'x' * 64, second: 'y' * 32), BigInt.from(96));
           }
         } finally {
           tracker.calloc.failAfter = null;
@@ -386,7 +386,7 @@ void main() {
       );
     }
     expect(callbackHandlesForTest(), before);
-    expect(takeCallback(consumer: ReentrantConsumer(), small: 1), 3);
+    expect(takeCallback(consumer: ReentrantConsumer(), small: 1), BigInt.from(3));
     expect(callbackHandlesForTest(), before);
   });
   test('an error status still transfers arguments to Rust', () async {

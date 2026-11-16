@@ -19,6 +19,7 @@ Started from upstream main at `ab977ca`.
 | `upstream-pr-178` | upstream main | #178: avoid shadowing `status` arguments. The merge resolves conflicts with #181 and #183 by keeping their call structure and applying #178's names. |
 | `savage-fix-enum-field-error-names` | upstream main | Ours, upstreamable. Enum variant fields keep `Error` mid-name in type names (`LnurlErrorDetails`). |
 | `savage-pr-190-on-0.29` | port | Rust-future part of #190: future handles are `Uint64`, fixing the 32-bit ARM ABI. Its object-handle parts don't apply on 0.29. |
+| `savage-pr-188-on-0.29` | port | #188 (draft upstream): u64 as `BigInt`, with `int` or `BigInt` accepted as input. Applies to the port unchanged. The merge resolves conflicts with #178 and #181 and moves #183's tests to `BigInt`. |
 
 ## Not taken
 
