@@ -24,7 +24,10 @@ class ForeignNested implements NestedForeignCallback {
   ForeignNested(this.leaf);
   @override
   bool invoke(ForeignLeafCallback value) {
-    expect(identical(value, leaf), isTrue);
+    // UniFFI 0.29 hands every `Arc<dyn Trait>` back as a Rust object, so a
+    // Dart implementation that went through Rust comes back as a Rust-backed
+    // wrapper, not the same instance. Calls still reach the Dart object.
+    expect(identical(value, leaf), isFalse);
     return value.value(41) == 42;
   }
 
