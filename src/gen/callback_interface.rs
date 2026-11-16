@@ -329,6 +329,7 @@ pub fn generate_callback_functions(
     type_helper: &dyn TypeHelperRenderer,
 ) -> dart::Tokens {
     let cls_name = &DartCodeOracle::class_name(callback_name);
+    let listeners = type_helper.callback_listeners();
 
     let functions: Vec<dart::Tokens> = methods.iter().enumerate().map(|(index, m)| {
         let method_name = &DartCodeOracle::fn_name(m.name()).to_string();
@@ -406,6 +407,12 @@ pub fn generate_callback_functions(
             );
 
             quote! {
+                $(if listeners => $(line_comment(&[
+                    "Runs as a NativeCallable.listener, on this isolate's event loop after",
+                    "Rust's call has returned. It must not write `outReturn`, which points",
+                    "into Rust's stack frame. Rust pre-fills it with a no-op dropped",
+                    "callback, and drops a completion sent after it stopped waiting.",
+                ])))
                 void $callback_method_name(
                     int uniffiHandle,
                     $(for param in &param_types => $param,)
@@ -415,10 +422,12 @@ pub fn generate_callback_functions(
                 ) {
                     try {
                     final callback = uniffiFutureCallback.asFunction<$(&completion_dart)>();
-                    final state = UniffiForeignFutureState();
-                    final handle = uniffiForeignFutureHandleMap.insert(state);
-                    outReturn.ref.handle = handle;
-                    outReturn.ref.free = uniffiForeignFutureFreePointer;
+                    $(if !listeners {
+                        final state = UniffiForeignFutureState();
+                        final handle = uniffiForeignFutureHandleMap.insert(state);
+                        outReturn.ref.handle = handle;
+                        outReturn.ref.free = uniffiForeignFutureFreePointer;
+                    })
 
                     () async {
                         var completed = false;
@@ -439,7 +448,7 @@ pub fn generate_callback_functions(
                                 // Conversion can throw. Claim completion only once the
                                 // result/status is ready to transfer to Rust.
                                 completed = true;
-                                uniffiForeignFutureHandleMap.maybeRemove(handle);
+                                $(if !listeners => uniffiForeignFutureHandleMap.maybeRemove(handle);)
                                 callback(uniffiCallbackData, resultStruct);
                             }
                         } catch (e) {
@@ -452,20 +461,41 @@ pub fn generate_callback_functions(
                                 // Conversion can throw. Claim completion only once the
                                 // result/status is ready to transfer to Rust.
                                 completed = true;
-                                uniffiForeignFutureHandleMap.maybeRemove(handle);
+                                $(if !listeners => uniffiForeignFutureHandleMap.maybeRemove(handle);)
                                 callback(uniffiCallbackData, resultStruct);
                             }
-                        } finally {
-                            uniffiForeignFutureHandleMap.maybeRemove(handle);
-                        }
+                        } $(if !listeners {
+                            finally {
+                                uniffiForeignFutureHandleMap.maybeRemove(handle);
+                            }
+                        })
                     }();
                     } finally {
                         $free_buffers
                     }
                 }
 
-                final Pointer<NativeFunction<$ffi_method_type>> $(callback_method_name)Pointer =
-                    Pointer.fromFunction<$ffi_method_type>($callback_method_name);
+                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, listeners))
+            }
+        } else if listeners && m.return_type().is_none() && m.throws_type().is_none() {
+            quote! {
+                $(line_comment(&[
+                    "Fire-and-forget NativeCallable.listener: Rust gets no result back, so",
+                    "this runs later on the isolate's event loop. `outReturn` and",
+                    "`callStatus` point into Rust's stack frame and must not be touched.",
+                    "An exception from the Dart method is an uncaught error in this isolate.",
+                ]))
+                void $callback_method_name(int uniffiHandle, $(for param in &param_types => $param,) Pointer<Void> outReturn, Pointer<RustCallStatus> callStatus) {
+                    try {
+                        final obj = FfiConverterCallbackInterface$cls_name._handleMap.get(uniffiHandle);
+                        $(arg_lifts)
+                        obj.$method_name($(for arg in &arg_names => $arg,));
+                    } finally {
+                        $free_buffers
+                    }
+                }
+
+                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, true))
             }
         } else {
             let call_status = &DartCodeOracle::call_status_name(&m.arguments());
@@ -496,8 +526,7 @@ pub fn generate_callback_functions(
                     }
                 }
 
-                final Pointer<NativeFunction<$ffi_method_type>> $(callback_method_name)Pointer =
-                    Pointer.fromFunction<$ffi_method_type>($callback_method_name);
+                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, false))
             }
         }
     }).collect();
@@ -518,8 +547,45 @@ pub fn generate_callback_functions(
             }
         }
 
-        final Pointer<NativeFunction<$free_callback_type>> $free_callback_pointer =
-            Pointer.fromFunction<$free_callback_type>($free_callback_fn);
+        $(callback_registration(free_callback_fn, free_callback_pointer, free_callback_type, listeners))
+    }
+}
+
+/// Emits `//` comment lines into the generated Dart.
+fn line_comment(lines: &[&str]) -> dart::Tokens {
+    let mut tokens = dart::Tokens::new();
+    for line in lines {
+        tokens.push();
+        tokens.append(format!("// {line}"));
+    }
+    tokens.push();
+    tokens
+}
+
+/// Exposes a generated callback function as a native function pointer.
+///
+/// A `NativeCallable.listener` may be invoked from any thread. The call is queued
+/// and runs later on this isolate's event loop. `keepIsolateAlive = false` lets a
+/// program exit while Rust still holds the pointer. `Pointer.fromFunction` runs
+/// synchronously, but only on this isolate's own thread.
+fn callback_registration(
+    function_name: &str,
+    pointer_name: &str,
+    native_type: &str,
+    listener: bool,
+) -> dart::Tokens {
+    if listener {
+        let callable = &format!("_{pointer_name}Listener");
+        quote! {
+            final NativeCallable<$native_type> $callable =
+                NativeCallable<$native_type>.listener($function_name)..keepIsolateAlive = false;
+            final Pointer<NativeFunction<$native_type>> $pointer_name = $callable.nativeFunction;
+        }
+    } else {
+        quote! {
+            final Pointer<NativeFunction<$native_type>> $pointer_name =
+                Pointer.fromFunction<$native_type>($function_name);
+        }
     }
 }
 
