@@ -117,7 +117,8 @@ impl DartCodeOracle {
                 FfiType::Float64 => quote!(double),
                 FfiType::RustBuffer(_) => quote!(RustBuffer),
                 FfiType::ForeignBytes => quote!(ForeignBytes),
-                FfiType::Handle => quote!(Pointer<Void>),
+                // UniFFI 0.29 uses `Handle` only for Rust futures: a `u64`, also on 32-bit.
+                FfiType::Handle => quote!(int),
                 // UniFFI 0.29: objects cross the FFI as `Arc` pointers.
                 FfiType::RustArcPtr(_) => quote!(Pointer<Void>),
                 FfiType::Callback(name) => quote!($(Self::ffi_callback_name(name))),
@@ -144,7 +145,8 @@ impl DartCodeOracle {
                 FfiType::Float64 => quote!(Double),
                 FfiType::RustBuffer(_) => quote!(RustBuffer),
                 FfiType::ForeignBytes => quote!(ForeignBytes),
-                FfiType::Handle => quote!(Pointer<Void>),
+                // UniFFI 0.29 uses `Handle` only for Rust futures: a `u64`, also on 32-bit.
+                FfiType::Handle => quote!(Uint64),
                 // UniFFI 0.29: objects cross the FFI as `Arc` pointers.
                 FfiType::RustArcPtr(_) => quote!(Pointer<Void>),
                 FfiType::Callback(name) => quote!($(Self::ffi_callback_name(name))),
@@ -169,6 +171,7 @@ impl DartCodeOracle {
             FfiType::Float32 => quote!(Float),
             FfiType::Float64 => quote!(Double),
             FfiType::RustBuffer(_) => quote!(RustBuffer),
+            FfiType::Handle => quote!(Pointer<Uint64>),
             FfiType::Callback(name) => quote!(Pointer<$(Self::ffi_callback_name(name))>),
             FfiType::Struct(name) => quote!(Pointer<$(Self::ffi_struct_name(name))>),
             _ => quote!(Pointer<Void>), // Fallback implementation
