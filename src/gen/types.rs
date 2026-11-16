@@ -18,6 +18,7 @@ pub const RUNTIME_MODULE: &str = "uniffi_runtime";
 
 pub struct TypeHelpersRenderer<'a> {
     pub callback_dispatch: bool,
+    pub callback_listeners: bool,
     ci: &'a ComponentInterface,
     include_once_names: RefCell<BTreeMap<String, Type>>,
     // Tracks ad-hoc "include once" names that don't map to a concrete `Type`
@@ -28,6 +29,7 @@ impl<'a> TypeHelpersRenderer<'a> {
     pub fn new(ci: &'a ComponentInterface) -> Self {
         Self {
             callback_dispatch: false,
+            callback_listeners: false,
             ci,
             include_once_names: RefCell::new(BTreeMap::new()),
             include_once_custom: RefCell::new(BTreeSet::new()),
@@ -98,6 +100,9 @@ impl<'a> TypeHelpersRenderer<'a> {
 impl TypeHelperRenderer for TypeHelpersRenderer<'_> {
     fn callback_dispatch(&self) -> bool {
         self.callback_dispatch
+    }
+    fn callback_listeners(&self) -> bool {
+        self.callback_listeners
     }
     // Checks if the type imports for each type have already been added
     fn include_once_check(&self, name: &str, ty: &Type) -> bool {
