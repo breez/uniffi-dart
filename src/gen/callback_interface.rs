@@ -91,11 +91,15 @@ pub fn generate_callback_interface(
                 );
             )
         });
+    // UniFFI 0.29: Rust's `try_lift` for a `with_foreign` trait always treats the incoming
+    // value as a foreign handle, so even Rust-backed wrappers must go through the handle map
+    // (as Kotlin 0.29 does). Passing their Arc pointer would be misread as a handle.
+    // A disposed wrapper is still rejected up front, as `uniffiClonePointer` does.
     let lower_rust_impl = rust_impl_name
         .map(|name| {
             quote!(
-                if (value is $name) {
-                    return value.uniffiClonePointer();
+                if (value is $name && value._uniffiDisposed) {
+                    throw StateError($(quoted(format!("Cannot use a disposed {cls_name}"))));
                 }
             )
         })
@@ -284,8 +288,6 @@ fn generate_callback_methods_signatures(callback_name: &str, methods: &[&Method]
     tokens.append(quote! {
         typedef UniffiCallbackInterface$(callback_name)Free = Void Function(Uint64);
         typedef UniffiCallbackInterface$(callback_name)FreeDart = void Function(int);
-        typedef UniffiCallbackInterface$(callback_name)Clone = Uint64 Function(Uint64);
-        typedef UniffiCallbackInterface$(callback_name)CloneDart = int Function(int);
     });
 
     tokens
@@ -298,13 +300,14 @@ pub fn generate_callback_vtable_interface(
     let vtable_name = format!("UniffiVTableCallbackInterface{callback_name}");
     let methods_vec: Vec<_> = methods.iter().enumerate().collect();
 
+    // UniFFI 0.29 vtable layout: one field per method, then `uniffi_free`.
+    // There is no `uniffi_clone` slot (that, and free-first ordering, arrived in 0.30).
     quote! {
         final class $vtable_name extends Struct {
-            external Pointer<NativeFunction<UniffiCallbackInterface$(callback_name)Free>> uniffiFree;
-            external Pointer<NativeFunction<UniffiCallbackInterface$(callback_name)Clone>> uniffiClone;
             $(for (index, m) in &methods_vec =>
                 external Pointer<NativeFunction<UniffiCallbackInterface$(callback_name)Method$(format!("{}",index))>> $(DartCodeOracle::fn_name(m.name()));
             )
+            external Pointer<NativeFunction<UniffiCallbackInterface$(callback_name)Free>> uniffiFree;
         }
     }
 }
@@ -487,11 +490,6 @@ pub fn generate_callback_functions(
     let free_callback_pointer = &format!("{}FreePointer", DartCodeOracle::fn_name(callback_name));
     let free_callback_type = &format!("UniffiCallbackInterface{callback_name}Free");
 
-    // Clone callback
-    let clone_callback_fn = &format!("{}CloneCallback", DartCodeOracle::fn_name(callback_name));
-    let clone_callback_pointer = &format!("{}ClonePointer", DartCodeOracle::fn_name(callback_name));
-    let clone_callback_type = &format!("UniffiCallbackInterface{callback_name}Clone");
-
     quote! {
         $(functions)
 
@@ -505,20 +503,6 @@ pub fn generate_callback_functions(
 
         final Pointer<NativeFunction<$free_callback_type>> $free_callback_pointer =
             Pointer.fromFunction<$free_callback_type>($free_callback_fn);
-
-        int $clone_callback_fn(int handle) {
-            try {
-                final obj = FfiConverterCallbackInterface$cls_name._handleMap.get(handle);
-                final newHandle = FfiConverterCallbackInterface$cls_name._handleMap.insert(obj);
-                return newHandle;
-            } catch (e) {
-                // Return 0 on error, which should trigger an error on the Rust side
-                return 0;
-            }
-        }
-
-        final Pointer<NativeFunction<$clone_callback_type>> $clone_callback_pointer =
-            Pointer.fromFunction<$clone_callback_type>($clone_callback_fn, 0);
     }
 }
 
@@ -650,7 +634,6 @@ pub fn generate_callback_interface_vtable_init_function(
 
             $(&vtable_static_instance_name) = calloc<$vtable_name>();
             $(&vtable_static_instance_name).ref.uniffiFree = $(format!("{}FreePointer", DartCodeOracle::fn_name(callback_name)));
-            $(&vtable_static_instance_name).ref.uniffiClone = $(format!("{}ClonePointer", DartCodeOracle::fn_name(callback_name)));
             $(for m in methods {
                 $(&vtable_static_instance_name).ref.$(DartCodeOracle::fn_name(m.name())) = $(DartCodeOracle::fn_name(callback_name))$(DartCodeOracle::class_name(m.name()))Pointer;
             })
