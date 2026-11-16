@@ -157,9 +157,8 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
         let reserved_type_names: std::collections::HashSet<String> = {
             let ci = type_helper.get_ci();
             ci.record_definitions()
-                .iter()
                 .map(|d| DartCodeOracle::class_name(d.name()))
-                .chain(ci.enum_definitions().iter().map(|d| DartCodeOracle::class_name(d.name())))
+                .chain(ci.enum_definitions().map(|d| DartCodeOracle::class_name(d.name())))
                 .chain(ci.object_definitions().iter().map(|d| DartCodeOracle::class_name(d.name())))
                 .chain(
                     ci.callback_interface_definitions()

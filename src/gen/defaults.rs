@@ -1,5 +1,5 @@
 use genco::prelude::*;
-use uniffi_bindgen::interface::{Argument, AsType, DefaultValue, Type};
+use uniffi_bindgen::interface::{Argument, AsType, Literal, Type};
 
 use super::oracle::DartCodeOracle;
 use super::primitives::render_interface_default_value;
@@ -12,7 +12,7 @@ fn enum_name_from_type(ty: &Type) -> Option<String> {
     }
 }
 
-pub(crate) fn render_default_value(default_value: &DefaultValue, ty: &Type) -> Option<String> {
+pub(crate) fn render_default_value(default_value: &Literal, ty: &Type) -> Option<String> {
     render_interface_default_value(default_value, ty, |ty, variant| {
         let enum_name = enum_name_from_type(ty)?;
         let variant_name = DartCodeOracle::enum_variant_name(variant);

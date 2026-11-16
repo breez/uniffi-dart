@@ -28,6 +28,7 @@ fn native_type(t: &FfiType) -> String {
         FfiType::Reference(t) => format!("*const {}", native_type(t)),
         FfiType::MutReference(t) => format!("*mut {}", native_type(t)),
         FfiType::VoidPointer => "*mut std::ffi::c_void".into(),
+        FfiType::RustArcPtr(_) => "*const std::ffi::c_void".into(),
     }
 }
 fn result_type(t: Option<&FfiType>) -> String {

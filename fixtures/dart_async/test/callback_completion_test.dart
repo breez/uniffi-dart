@@ -36,7 +36,7 @@ void main() {
     final completion =
         NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
           int data,
-          UniffiForeignFutureResultU8 result,
+          UniffiForeignFutureStructU8 result,
         ) {
           calls++;
           result.callStatus.errorBuf.free();
@@ -103,7 +103,7 @@ void main() {
       final completion =
           NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
             int data,
-            UniffiForeignFutureResultU8 result,
+            UniffiForeignFutureStructU8 result,
           ) {
             completions++;
             final code = result.callStatus.code;
@@ -148,7 +148,7 @@ void main() {
     final completion =
         NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
           int data,
-          UniffiForeignFutureResultU8 result,
+          UniffiForeignFutureStructU8 result,
         ) {
           final code = result.callStatus.code;
           if (code != CALL_SUCCESS) result.callStatus.errorBuf.free();
@@ -180,7 +180,7 @@ void main() {
         final completion =
             NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
               int data,
-              UniffiForeignFutureResultU8 result,
+              UniffiForeignFutureStructU8 result,
             ) {
               completions++;
               completedCode = result.callStatus.code;

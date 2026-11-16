@@ -222,13 +222,8 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
     }
 
     for trait_impl in obj.trait_impls() {
-        // Extract the trait name from the trait_ty Type
-        let trait_name = match &trait_impl.trait_ty {
-            uniffi_bindgen::interface::Type::Object { name, .. } => name,
-            uniffi_bindgen::interface::Type::CallbackInterface { name, .. } => name,
-            _ => continue, // Skip if it's not an Object or CallbackInterface
-        };
-        let trait_iface = DartCodeOracle::trait_interface_name(type_helper.get_ci(), trait_name);
+        let trait_iface =
+            DartCodeOracle::trait_interface_name(type_helper.get_ci(), &trait_impl.trait_name);
         if !implements.contains(&trait_iface) {
             implements.push(trait_iface);
         }
@@ -646,10 +641,6 @@ fn generate_trait_helpers(obj: &Object, type_helper: &dyn TypeHelperRenderer) ->
                     }
                 });
                 generated_hash = true;
-            }
-            UniffiTrait::Ord { .. } => {
-                // Ord trait is not currently supported in Dart bindings
-                // Skip generation for now
             }
         }
     }
