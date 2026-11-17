@@ -32,6 +32,7 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | `savage-async-callback-listeners-on-0.29` | Ours, superseded, not to be PR'd | Its `callback_listeners` flag is removed by the always-on merge | Nothing left in the tree. |
 | `savage-callback-listeners-always-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-listeners-always`) | Yes. Async methods and frees only: sync callbacks wait for the relay PR | Upstream PR. |
 | `savage-callback-relay-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-relay`, stacked on the listeners PR) | Yes, plus dropping `uniffi_clone`, which 0.29 doesn't have | Upstream PR. |
+| `savage-custom-type-config-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-custom-type-config`) | Yes, minus the fixture's default-value cases, which UniFFI 0.29 rejects. The merge also drops #181's custom-type recursion in callback return handling, which both PRs upstream will need | Upstream PR. |
 | `BREEZ.md` | Fork-only | n/a | Goes with the fork. |
 
 ## Merged
@@ -50,6 +51,7 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | `upstream-pr-196` | upstream main | #196: name types with `Error` inside their name by their declared Dart name, in enum variant fields and in `Optional`/`Sequence` helpers. Supersedes `savage-fix-enum-field-error-names`, whose identical code change it replaces. |
 | `savage-fix-enum-field-error-names` (again) | upstream main | Drops that branch's `enum-error-named-fields` fixture, so the fork carries #196 exactly. |
 | `savage-callback-relay-on-0.29` | port | Ours, from `savage-callback-relay` (upstream main, upstreamable). Generates #186's companion as a callback relay for every component with callbacks. Bundled as the `<asset>_dispatch` native asset, it lets Rust call every callback from any thread: inline on the isolate's thread, queued from others, failing instead of crashing for an exited isolate. Without it, a warning names the sync callbacks that would abort. See `docs/callback-threads.md`. The SDK's Flutter package must build and bundle `uniffi_dispatch/`. |
+| `savage-custom-type-config-on-0.29` | port | Ours, from `savage-custom-type-config` (upstream main, upstreamable). `[bindings.dart.custom_types.<Name>]` with Kotlin/Swift's keys (`type_name`, `imports`, `lift`/`lower`, older `into_custom`/`from_custom`) maps a custom type to a Dart type, for example the SDK's `u128` to `BigInt`. See `docs/custom-types.md`. The merge routes configured defaults through #183's scoped lowering and #188's initializer list. It also makes #181's callback return handling lower custom types with their own converter instead of the builtin's, and restores the fixture's custom-scalar callback returns, which #181 fixes (#162). |
 
 ## Not taken
 

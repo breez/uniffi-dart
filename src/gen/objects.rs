@@ -5,7 +5,7 @@ use heck::ToLowerCamelCase;
 use uniffi_bindgen::interface::{AsType, Method, Object, ObjectImpl, UniffiTrait};
 use uniffi_bindgen::pipeline::general::nodes::Literal;
 
-use super::defaults::render_argument_param;
+use super::defaults::{lower_argument, render_argument_param};
 use super::stream::generate_stream;
 use crate::gen::callback_interface::{
     generate_callback_functions, generate_callback_interface,
@@ -148,18 +148,22 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             quote!({$(for arg in constructor.arguments() =>
                 $(render_argument_param(
                     arg,
-                    quote!($(DartCodeOracle::dart_type_label(Some(&arg.as_type()))))
+                    quote!($(DartCodeOracle::dart_type_label(Some(&arg.as_type())))),
+                    type_helper,
                 )),
             )})
         };
 
         let call_status = &DartCodeOracle::call_status_name(&constructor.arguments());
+        // Configured custom types apply their defaults while lowering.
+        let lowered: Vec<_> =
+            constructor.arguments().iter().map(|arg| lower_argument(arg, type_helper)).collect();
         let call = DartCodeOracle::scoped_ffi_call(
             ffi_func_name,
             &constructor.arguments(),
             false,
             if constructor.is_async() { None } else { Some(quote!($call_status)) },
-            None,
+            Some(&lowered),
         );
 
         // Ensure argument types are included
@@ -437,12 +441,14 @@ fn generate_callback_trait_rust_method(
         quote!(null)
     };
 
+    let lowered: Vec<_> =
+        method.arguments().iter().map(|arg| lower_argument(arg, type_helper)).collect();
     let call = DartCodeOracle::scoped_ffi_call(
         method.ffi_func().name(),
         &method.arguments(),
         true,
         if method.is_async() { None } else { Some(quote!($call_status)) },
-        None,
+        Some(&lowered),
     );
 
     if method.is_async() {
@@ -495,7 +501,8 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!({$(for arg in &func.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };
@@ -516,12 +523,14 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!(null)
     };
 
+    let lowered: Vec<_> =
+        func.arguments().iter().map(|arg| lower_argument(arg, type_helper)).collect();
     let call = DartCodeOracle::scoped_ffi_call(
         func.ffi_func().name(),
         &func.arguments(),
         true,
         if func.is_async() { None } else { Some(quote!($call_status)) },
-        None,
+        Some(&lowered),
     );
 
     if func.is_async() {
@@ -838,7 +847,8 @@ fn generate_interface_method(
         quote!({$(for arg in method.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };

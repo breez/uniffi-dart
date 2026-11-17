@@ -2,7 +2,7 @@ use genco::prelude::*;
 use heck::ToLowerCamelCase;
 use uniffi_bindgen::interface::{AsType, Function};
 
-use super::defaults::render_argument_param;
+use super::defaults::{lower_argument, render_argument_param};
 use super::oracle::AsCodeType;
 use super::render::TypeHelperRenderer;
 use crate::gen::oracle::DartCodeOracle;
@@ -16,7 +16,8 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         quote!({$(for arg in &func.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };
@@ -37,12 +38,15 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         quote!(null)
     };
 
+    // Configured custom types apply their defaults while lowering.
+    let lowered: Vec<_> =
+        func.arguments().iter().map(|arg| lower_argument(arg, type_helper)).collect();
     let call = DartCodeOracle::scoped_ffi_call(
         func.ffi_func().name(),
         &func.arguments(),
         false,
         if func.is_async() { None } else { Some(quote!($call_status)) },
-        None,
+        Some(&lowered),
     );
 
     // Use centralized callback-aware argument lowering

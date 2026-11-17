@@ -407,9 +407,10 @@ impl DartCodeOracle {
     ) -> dart::Tokens {
         let result = super::unsigned::normalize_for_lower(ret_type, quote!(result));
         match ret_type {
-            Type::Custom { builtin, .. } => {
-                Self::callback_return_handling(builtin, method_name, args, call_status)
-            }
+            // A custom type's own converter lowers it to its builtin's FFI
+            // value, which the final arm writes to the slot for that FFI type.
+            // It must not recurse into the builtin's converter: a custom type
+            // configured with `custom_types` isn't the builtin in Dart.
             Type::Boolean => {
                 // For boolean return values
                 quote!(

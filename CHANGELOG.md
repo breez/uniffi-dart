@@ -24,6 +24,11 @@ All notable changes to uniffi-dart will be documented in this file.
   thread. See [docs/callback-threads.md](docs/callback-threads.md).
 - `callback_dispatch` shares the relay's runtime, and wakes the isolate through
   a port instead of a `NativeCallable.listener`. Rebuild its companion crate.
+- Map custom types to Dart types with `[bindings.dart.custom_types.<Name>]`,
+  using the keys UniFFI's Kotlin and Swift bindings accept: `type_name`,
+  `imports`, `lift` and `lower`, and the older `into_custom` and `from_custom`.
+  Unconfigured custom types are unchanged. See
+  [docs/custom-types.md](docs/custom-types.md).
 
 ### Fixes
 

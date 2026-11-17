@@ -42,6 +42,9 @@ pub struct Config {
     asset_id: Option<String>,
     #[serde(default)]
     callback_dispatch: bool,
+    /// `[bindings.dart.custom_types.<Name>]`, keyed by the custom type's name.
+    #[serde(default)]
+    custom_types: HashMap<String, custom::CustomTypeConfig>,
 }
 
 impl From<&ComponentInterface> for Config {
@@ -52,6 +55,7 @@ impl From<&ComponentInterface> for Config {
             external_packages: HashMap::new(),
             asset_id: None,
             callback_dispatch: false,
+            custom_types: HashMap::new(),
         }
     }
 }
@@ -187,6 +191,7 @@ impl<'a> DartWrapper<'a> {
     pub fn new(ci: &'a ComponentInterface, config: &'a Config) -> Self {
         let mut type_renderer = TypeHelpersRenderer::new(ci);
         type_renderer.callback_dispatch = config.callback_dispatch;
+        type_renderer.custom_types = config.custom_types.clone();
         DartWrapper { ci, config, type_renderer }
     }
 

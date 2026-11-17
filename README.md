@@ -142,6 +142,13 @@ synchronous callback methods run only on the owning isolate's thread. See
 [docs/callback-threads.md](docs/callback-threads.md) for bundling, ordering,
 isolate ownership and hot restart.
 
+## Custom types
+
+Custom types are `typedef`s of their builtin by default. Map one to a Dart type,
+for example a `u128` sent as a string to `BigInt`, with
+`[bindings.dart.custom_types.<Name>]` in `uniffi.toml`, using the same keys as
+UniFFI's Kotlin and Swift bindings. See [docs/custom-types.md](docs/custom-types.md).
+
 ## Versioning
 
 uniffi-dart is versioned independently from uniffi-rs. We follow the

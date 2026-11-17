@@ -2,7 +2,7 @@ use genco::prelude::*;
 use uniffi_bindgen::interface::{AsType, Record, Type};
 use uniffi_bindgen::pipeline::general::nodes::Literal as PipelineLiteral;
 
-use super::defaults::render_default_value;
+use super::defaults::{configured_custom_default, render_default_value};
 use super::oracle::{AsCodeType, DartCodeOracle};
 use super::render::{Renderable, TypeHelperRenderer};
 use super::types::generate_type;
@@ -51,12 +51,27 @@ impl Renderable for RecordCodeType {
 pub fn generate_record(obj: &Record, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {
     let cls_name = &DartCodeOracle::class_name(obj.name());
     let ffi_conv_name = &obj.as_codetype().ffi_converter_name();
+    // Configured custom types with a default take a nullable parameter, and
+    // the initializer list applies the default (see `configured_custom_default`).
+    let custom_defaults: Vec<(String, String)> = obj
+        .fields()
+        .iter()
+        .filter_map(|field| {
+            let default =
+                configured_custom_default(field.default_value()?, &field.as_type(), type_helper)?;
+            Some((DartCodeOracle::var_name(field.name()), default))
+        })
+        .collect();
     let mut initializers = Vec::new();
     let constructor_params: Vec<dart::Tokens> = obj
         .fields()
         .iter()
         .map(|field| {
             let name = DartCodeOracle::var_name(field.name());
+            if let Some((_, default)) = custom_defaults.iter().find(|(custom, _)| *custom == name) {
+                initializers.push(quote!($(&name) = $(&name) ?? $default));
+                return quote!($(generate_type(&field.as_type()))? $(&name));
+            }
             let (formal, initializer) =
                 super::unsigned::constructor_field(&field.as_type(), &name, quote!(this.$(&name)));
             initializers.extend(initializer);
