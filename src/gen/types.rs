@@ -617,14 +617,22 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 "Completes once this isolate has run every callback that Rust queued to",
                 "it before this call.",
                 "",
-                "Async callback methods and callback frees are delivered through",
-                "`NativeCallable.listener`. They run on a later event-loop turn, even",
-                "when Rust makes the call on this isolate's own thread. Await this to",
-                "wait for calls that are already queued, for example to check handle",
-                "counts in tests. For an async method it waits until the method has",
-                "started, not until its future completes.",
+                "With the callback relay library bundled, callbacks that Rust makes",
+                "from other threads are queued to this isolate. Without it, async",
+                "methods and frees are delivered through `NativeCallable.listener`,",
+                "and run on a later event-loop turn even when Rust makes the call on",
+                "this isolate's own thread. Await this to wait for calls that are",
+                "already queued, for example to check handle counts in tests. For an",
+                "async method it waits until the method has started, not until its",
+                "future completes.",
             ]))
-            Future<void> uniffiCallbackBarrier() {
+            Future<void> uniffiCallbackBarrier() async {
+                do {
+                    await _uniffiListenerMarker();
+                } while (_uniffiRelayHasQueuedCalls());
+            }
+
+            Future<void> _uniffiListenerMarker() {
                 final done = Completer<void>();
                 late final NativeCallable<Void Function()> marker;
                 marker = NativeCallable<Void Function()>.listener(() {
@@ -632,8 +640,9 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                     done.complete();
                 });
                 $(line_comment(&[
-                    "The VM delivers an isolate's listener calls in the order they were",
-                    "made, so this runs after everything queued before it.",
+                    "The VM delivers an isolate's listener calls and port messages in",
+                    "the order they were sent, so this runs after everything queued",
+                    "before it.",
                 ]))
                 marker.nativeFunction.asFunction<void Function()>()();
                 return done.future;

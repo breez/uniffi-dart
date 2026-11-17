@@ -91,7 +91,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             obj.name(),
             &obj.methods(),
             &ffi_module,
-            type_helper.callback_dispatch(),
+            type_helper,
         );
         let rust_impl = generate_callback_trait_rust_impl(obj, type_helper);
         return quote!(
