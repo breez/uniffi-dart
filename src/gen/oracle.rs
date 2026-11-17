@@ -5,6 +5,7 @@ use uniffi_bindgen::interface::{Argument, AsType, Callable, FfiType, Object, Obj
 use uniffi_bindgen::ComponentInterface;
 
 // use super::render::{AsRenderable, Renderable};
+use super::render::TypeHelperRenderer;
 use super::{callback_interface, compounds, custom, enums, objects, records};
 use crate::gen::{primitives, CodeType};
 
@@ -193,8 +194,12 @@ impl DartCodeOracle {
     //     }
     // }
 
-    pub fn type_lower_fn(ty: &Type, inner: dart::Tokens) -> dart::Tokens {
-        let inner = super::unsigned::normalize_for_lower(ty, inner);
+    pub fn type_lower_fn(
+        ty: &Type,
+        inner: dart::Tokens,
+        type_helper: &dyn TypeHelperRenderer,
+    ) -> dart::Tokens {
+        let inner = super::unsigned::normalize_for_lower(ty, inner, type_helper);
         match ty {
             Type::Int8
             | Type::Int16
@@ -381,12 +386,14 @@ impl DartCodeOracle {
         ret_type: &Type,
         method_name: &str,
         args: Vec<dart::Tokens>,
+        type_helper: &dyn TypeHelperRenderer,
     ) -> dart::Tokens {
-        let result = super::unsigned::normalize_for_lower(ret_type, quote!(result));
+        let result = super::unsigned::normalize_for_lower(ret_type, quote!(result), type_helper);
         match ret_type {
-            Type::Custom { builtin, .. } => {
-                Self::callback_return_handling(builtin, method_name, args)
-            }
+            // A custom type's own converter lowers it to its builtin's FFI
+            // value, which the final arm writes to the slot for that FFI type.
+            // It must not recurse into the builtin's converter: a custom type
+            // configured with `custom_types` isn't the builtin in Dart.
             Type::Boolean => {
                 // For boolean return values
                 quote!(
@@ -457,11 +464,14 @@ impl DartCodeOracle {
                 }
             }
             _ => {
-                // For other return types
                 let lowered = ret_type.as_codetype().ffi_converter_name();
+                let destination = match FfiType::from(ret_type) {
+                    FfiType::RustBuffer(_) => quote!(outReturn.ref),
+                    _ => quote!(outReturn.value),
+                };
                 quote!(
                     final result = obj.$method_name($(for arg in &args => $arg,));
-                    outReturn.ref = $lowered.lower($result);
+                    $destination = $lowered.lower($result);
                 )
             }
         }
@@ -545,8 +555,12 @@ impl DartCodeOracle {
     }
 
     /// Lower argument with special handling for callback traits
-    pub fn lower_arg_with_callback_handling(arg: &Argument) -> dart::Tokens {
-        let base_lower = Self::type_lower_fn(&arg.as_type(), quote!($(Self::var_name(arg.name()))));
+    pub fn lower_arg_with_callback_handling(
+        arg: &Argument,
+        type_helper: &dyn TypeHelperRenderer,
+    ) -> dart::Tokens {
+        let name = Self::var_name(arg.name());
+        let base_lower = Self::type_lower_fn(&arg.as_type(), quote!($name), type_helper);
         match arg.as_type() {
             Type::Object { imp: ObjectImpl::CallbackTrait, .. } => base_lower,
             Type::CallbackInterface { .. } => quote!($base_lower.address),

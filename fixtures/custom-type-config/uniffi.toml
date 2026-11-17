@@ -14,3 +14,9 @@ lower = "{}.toString()"
 imports = ["test/money.dart"]
 lift = "Money.fromCents({})"
 lower = "{}.cents"
+
+# A u64 builtin: `lift` gets a BigInt, and `lower` may give an int or a BigInt.
+[bindings.dart.custom_types.Stamp]
+type_name = "DateTime"
+lift = "DateTime.fromMillisecondsSinceEpoch({}.toInt(), isUtc: true)"
+lower = "{}.millisecondsSinceEpoch"

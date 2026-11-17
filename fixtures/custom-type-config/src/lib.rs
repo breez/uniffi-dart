@@ -36,6 +36,17 @@ uniffi::custom_type!(Count, u32, {
     try_lift: |value| Ok(Count(value)),
 });
 
+/// Milliseconds since the epoch, carried as a `u64` and configured as Dart's
+/// `DateTime`. Plain u64 values take `int` or `BigInt` input, but a configured
+/// type is its own Dart type and goes through its own converter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp(pub u64);
+
+uniffi::custom_type!(Stamp, u64, {
+    lower: |stamp| stamp.0,
+    try_lift: |millis| Ok(Stamp(millis)),
+});
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Wallet {
     pub balance: u128,
@@ -149,12 +160,13 @@ impl Vault {
     }
 }
 
-/// A callback interface with custom-typed arguments and returns. A callback
-/// returning a custom type over a scalar, like `Money`, needs #162's fix.
+/// A callback interface with custom-typed arguments and returns, including a
+/// configured custom type over a scalar, `Money` (#162).
 #[uniffi::export(callback_interface)]
 pub trait Ledger: Send + Sync {
     fn record(&self, amount: u128, from: Url);
     fn balance(&self) -> u128;
+    fn cash(&self) -> Money;
 }
 
 /// A foreign-implementable trait, sync and async.
@@ -164,6 +176,7 @@ pub trait Pricer: Send + Sync {
     fn price(&self, item: Url) -> u128;
     async fn price_async(&self, item: Url) -> u128;
     fn cents(&self, price: Money) -> u128;
+    fn discount(&self, price: Money) -> Money;
 }
 
 #[uniffi::export]
@@ -185,6 +198,75 @@ pub async fn price_of_async(pricer: Arc<dyn Pricer>, item: Url) -> u128 {
 #[uniffi::export]
 pub fn cents_of(pricer: Arc<dyn Pricer>, price: Money) -> u128 {
     pricer.cents(price)
+}
+
+#[uniffi::export]
+pub fn cash_in(ledger: Box<dyn Ledger>) -> Money {
+    ledger.cash()
+}
+
+#[uniffi::export]
+pub fn discounted(pricer: Arc<dyn Pricer>, price: Money) -> Money {
+    pricer.discount(price)
+}
+
+/// `Stamp` in a record, next to a plain u64.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Event {
+    pub at: Stamp,
+    pub earlier: Option<Stamp>,
+    pub ticks: u64,
+    #[uniffi(default = 1700000000000)]
+    pub since: Stamp,
+}
+
+#[uniffi::export]
+pub fn echo_stamp(stamp: Stamp) -> Stamp {
+    stamp
+}
+
+#[uniffi::export]
+pub async fn echo_stamp_async(stamp: Stamp) -> Stamp {
+    stamp
+}
+
+#[uniffi::export]
+pub fn add_millis(stamp: Stamp, millis: u64) -> Stamp {
+    Stamp(stamp.0 + millis)
+}
+
+#[uniffi::export(default(stamp = 1700000000000))]
+pub fn stamp_or_default(stamp: Stamp) -> Stamp {
+    stamp
+}
+
+#[uniffi::export]
+pub fn echo_event(event: Event) -> Event {
+    event
+}
+
+/// `Stamp` as a foreign trait's result, sync and async, and in a sequence.
+#[uniffi::export(with_foreign)]
+#[async_trait::async_trait]
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Stamp;
+    async fn now_async(&self) -> Stamp;
+    fn history(&self) -> Vec<Stamp>;
+}
+
+#[uniffi::export]
+pub fn read_clock(clock: Arc<dyn Clock>) -> Stamp {
+    clock.now()
+}
+
+#[uniffi::export]
+pub async fn read_clock_async(clock: Arc<dyn Clock>) -> Stamp {
+    clock.now_async().await
+}
+
+#[uniffi::export]
+pub fn read_history(clock: Arc<dyn Clock>) -> Vec<Stamp> {
+    clock.history()
 }
 
 /// Defaults: configured custom types get theirs through `lift`.

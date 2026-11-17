@@ -37,7 +37,10 @@ pub(crate) fn configured_custom_default(
     };
     let config = type_helper.custom_type_config(name)?;
     let literal = render_default_value(default_value, builtin)?;
-    Some(config.lift(&literal))
+    // `lift` takes the builtin's Dart value, so a u64 literal, rendered for a
+    // parameter as a const placeholder, becomes the BigInt it stands for.
+    let literal = super::unsigned::normalize(builtin, quote!($literal), type_helper);
+    Some(config.lift(&literal.to_string().ok()?))
 }
 
 fn argument_custom_default(arg: &Argument, type_helper: &dyn TypeHelperRenderer) -> Option<String> {
@@ -50,9 +53,13 @@ pub(crate) fn lower_argument(arg: &Argument, type_helper: &dyn TypeHelperRendere
     match argument_custom_default(arg, type_helper) {
         Some(default_expr) => {
             let name = DartCodeOracle::var_name(arg.name());
-            DartCodeOracle::type_lower_fn(&arg.as_type(), quote!(($name ?? $default_expr)))
+            DartCodeOracle::type_lower_fn(
+                &arg.as_type(),
+                quote!(($name ?? $default_expr)),
+                type_helper,
+            )
         }
-        None => DartCodeOracle::lower_arg_with_callback_handling(arg),
+        None => DartCodeOracle::lower_arg_with_callback_handling(arg, type_helper),
     }
 }
 
@@ -65,8 +72,8 @@ pub(crate) fn render_argument_param(
     // Callers pass `render_type(..)` so the converter is still registered. For
     // arguments that accept flexible u64 input only the annotation is widened,
     // so those tokens are deliberately replaced here.
-    let type_tokens = if super::unsigned::accepts_u64(&arg.as_type()) {
-        super::unsigned::input_type(&arg.as_type())
+    let type_tokens = if super::unsigned::accepts_u64(&arg.as_type(), type_helper) {
+        super::unsigned::input_type(&arg.as_type(), type_helper)
     } else {
         type_tokens
     };

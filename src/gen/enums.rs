@@ -208,6 +208,7 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
                         &field.as_type(),
                         &param_name,
                         quote!($param_type this.$(&param_name)),
+                        type_helper,
                     );
                     initializers.extend(initializer);
                     if variant_obj.fields().len() > 1 {

@@ -18,6 +18,9 @@ class DartLedger implements Ledger {
 
   @override
   BigInt balance() => recorded;
+
+  @override
+  Money cash() => const Money.fromCents(250);
 }
 
 class DartPricer implements Pricer {
@@ -29,6 +32,23 @@ class DartPricer implements Pricer {
 
   @override
   BigInt cents(Money price) => BigInt.from(price.cents);
+
+  @override
+  Money discount(Money price) => Money.fromCents(price.cents ~/ 2);
+}
+
+final stampAt = DateTime.fromMillisecondsSinceEpoch(1700000000000, isUtc: true);
+final secondLater = stampAt.add(const Duration(seconds: 1));
+
+class DartClock implements Clock {
+  @override
+  DateTime now() => stampAt;
+
+  @override
+  Future<DateTime> nowAsync() async => secondLater;
+
+  @override
+  List<DateTime> history() => [stampAt, secondLater];
 }
 
 Wallet wallet({BigInt? balance}) => Wallet(
@@ -125,6 +145,7 @@ void main() {
       big,
     );
     expect(ledger.lastFrom, Uri.parse('https://from.example'));
+    expect(cashIn(ledger: DartLedger()), const Money.fromCents(250));
   });
 
   test('foreign trait arguments and returns, sync and async', () async {
@@ -133,5 +154,42 @@ void main() {
     expect(priceOf(pricer: pricer, item: item), big);
     expect(await priceOfAsync(pricer: pricer, item: item), big);
     expect(centsOf(pricer: pricer, price: const Money.fromCents(100)), BigInt.from(100));
+    expect(discounted(pricer: pricer, price: const Money.fromCents(100)), const Money.fromCents(50));
+  });
+
+  test('a configured u64 type is its own Dart type, not u64 input', () async {
+    final DateTime echoed = echoStamp(stamp: stampAt);
+    expect(echoed, stampAt);
+    expect(await echoStampAsync(stamp: stampAt), stampAt);
+    expect(stampOrDefault(), stampAt);
+    expect(stampOrDefault(stamp: secondLater), secondLater);
+    // The plain u64 next to it still takes an int or a BigInt.
+    expect(addMillis(stamp: stampAt, millis: 1000), secondLater);
+    expect(addMillis(stamp: stampAt, millis: BigInt.from(1000)), secondLater);
+  });
+
+  test('configured u64 record fields, plain, optional and defaulted', () {
+    final event = Event(at: stampAt, earlier: null, ticks: 5);
+    expect(event.since, stampAt);
+    expect(event.ticks, BigInt.from(5));
+    final echoed = echoEvent(
+      event: Event(at: secondLater, earlier: stampAt, ticks: BigInt.two, since: secondLater),
+    );
+    final DateTime at = echoed.at;
+    final DateTime? earlier = echoed.earlier;
+    expect(at, secondLater);
+    expect(earlier, stampAt);
+    expect(echoed.ticks, BigInt.two);
+    expect(echoed.since, secondLater);
+  });
+
+  test('configured u64 foreign trait results, sync and async', () async {
+    // Compile-time check: the results are DateTime, not u64 input.
+    final Clock clock = DartClock();
+    final DateTime Function() now = clock.now;
+    expect(now(), stampAt);
+    expect(readClock(clock: clock), stampAt);
+    expect(await readClockAsync(clock: clock), secondLater);
+    expect(readHistory(clock: clock), [stampAt, secondLater]);
   });
 }
