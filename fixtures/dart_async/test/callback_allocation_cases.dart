@@ -44,10 +44,9 @@ void main() {
           CALL_UNEXPECTED_ERROR,
         );
         expect(calls, 1);
-        expect(
-          uniffiForeignFutureHandleMap.maybeRemove(out.ref.handle),
-          isNull,
-        );
+        // The out-parameter belongs to Rust and is left untouched.
+        expect(out.ref.handle, 0);
+        expect(out.ref.free, nullptr);
       } finally {
         tracker.fail = false;
         completion.close();

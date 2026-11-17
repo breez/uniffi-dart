@@ -1,6 +1,6 @@
 # Opt-in synchronous callback dispatch
 
-Generated Dart callbacks normally use `Pointer.fromFunction`, which aborts when Rust invokes them from another thread. The dispatcher keeps callback execution in the owning Dart isolate and moves native entry calls to workers. Dart-facing calls and callback methods remain synchronous; the original callback objects and their mutable state remain in that isolate.
+Without this option, the bindings deliver async callback methods and frees through `NativeCallable.listener`, which Rust may call from any thread (see [callback-threads.md](callback-threads.md)). Synchronous callback methods use `Pointer.fromFunction`, which aborts when Rust invokes them from another thread. With this option, the free also uses `Pointer.fromFunction`, and the companion relays every synchronous callback.
 
 This is experimental and disabled by default. **Do not use it in `Isolate.run`,
 Flutter `compute`, hot restart, or isolates that can be killed while Rust retains
