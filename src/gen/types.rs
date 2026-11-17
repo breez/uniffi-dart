@@ -1,10 +1,11 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use genco::prelude::*;
 use uniffi_bindgen::interface::{AsType, Callable, Type};
 use uniffi_bindgen::ComponentInterface;
 
+use super::custom::CustomTypeConfig;
 use super::oracle::AsCodeType;
 use super::render::{AsRenderable, Renderable, Renderer, TypeHelperRenderer};
 use super::{enums, functions, objects, primitives, records};
@@ -18,6 +19,7 @@ pub const RUNTIME_MODULE: &str = "uniffi_runtime";
 
 pub struct TypeHelpersRenderer<'a> {
     pub callback_dispatch: bool,
+    pub custom_types: HashMap<String, CustomTypeConfig>,
     ci: &'a ComponentInterface,
     include_once_names: RefCell<BTreeMap<String, Type>>,
     // Tracks ad-hoc "include once" names that don't map to a concrete `Type`
@@ -28,6 +30,7 @@ impl<'a> TypeHelpersRenderer<'a> {
     pub fn new(ci: &'a ComponentInterface) -> Self {
         Self {
             callback_dispatch: false,
+            custom_types: HashMap::new(),
             ci,
             include_once_names: RefCell::new(BTreeMap::new()),
             include_once_custom: RefCell::new(BTreeSet::new()),
@@ -99,6 +102,9 @@ impl TypeHelperRenderer for TypeHelpersRenderer<'_> {
     fn callback_dispatch(&self) -> bool {
         self.callback_dispatch
     }
+    fn custom_type_config(&self, name: &str) -> Option<&CustomTypeConfig> {
+        self.custom_types.get(name)
+    }
     // Checks if the type imports for each type have already been added
     fn include_once_check(&self, name: &str, ty: &Type) -> bool {
         let mut map = self.include_once_names.borrow_mut();
@@ -157,9 +163,22 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
                 self.ci.namespace_for_type(ty).expect("external type should have module_path")
             })
             .collect::<BTreeSet<_>>();
+        // Imports that configured custom types ask for, for the ones used here.
+        let custom_imports = self
+            .ci
+            .iter_local_types()
+            .filter_map(|ty| match ty {
+                Type::Custom { name, .. } => self.custom_types.get(name),
+                _ => None,
+            })
+            .flat_map(|config| config.imports.iter().flatten())
+            .collect::<BTreeSet<_>>();
         let imports: dart::Tokens = quote!(
             $( for imp in modules_to_import {
                 $(format!("import \"{}.dart\"", imp));
+            })
+            $( for imp in custom_imports {
+                $(format!("import {};", quoted_import(imp)))
             })
         );
 
@@ -234,6 +253,11 @@ pub fn generate_type(ty: &Type) -> dart::Tokens {
         Type::Custom { name, .. } => quote!($(DartCodeOracle::class_name(name))),
         _ => todo!("Type::{:?}", ty),
     }
+}
+
+/// A Dart string literal for an import URI from configuration.
+fn quoted_import(uri: &str) -> String {
+    format!("\"{}\"", uri.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$"))
 }
 
 /// Runtime scaffolding shared by every generated file.

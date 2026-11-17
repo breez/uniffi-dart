@@ -5,7 +5,7 @@ use heck::ToLowerCamelCase;
 use uniffi_bindgen::interface::{AsType, Method, Object, ObjectImpl, UniffiTrait};
 use uniffi_bindgen::pipeline::general::nodes::Literal;
 
-use super::defaults::render_argument_param;
+use super::defaults::{lower_argument, render_argument_param};
 use super::stream::generate_stream;
 use crate::gen::callback_interface::{
     generate_callback_functions, generate_callback_interface,
@@ -148,13 +148,14 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             quote!({$(for arg in constructor.arguments() =>
                 $(render_argument_param(
                     arg,
-                    quote!($(DartCodeOracle::dart_type_label(Some(&arg.as_type()))))
+                    quote!($(DartCodeOracle::dart_type_label(Some(&arg.as_type())))),
+                    type_helper,
                 )),
             )})
         };
 
         let ffi_call_args = quote!($(for arg in constructor.arguments() =>
-            $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+            $(lower_argument(arg, type_helper)),)
         );
 
         // Ensure argument types are included
@@ -441,7 +442,7 @@ fn generate_callback_trait_rust_method(
                 return uniffiRustCallAsync(
                     () => $(method.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                        $(for arg in &method.arguments() => $(lower_argument(arg, type_helper)),)
                     ),
                     $(DartCodeOracle::async_poll(method, type_helper.get_ci())),
                     $(DartCodeOracle::async_complete(method, type_helper.get_ci())),
@@ -458,7 +459,7 @@ fn generate_callback_trait_rust_method(
                 return rustCall((status) {
                     $(method.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                        $(for arg in &method.arguments() => $(lower_argument(arg, type_helper)),)
                         status
                     );
                 }, $error_handler);
@@ -471,7 +472,7 @@ fn generate_callback_trait_rust_method(
                 return rustCallWithLifter(
                     (status) => $(method.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                        $(for arg in &method.arguments() => $(lower_argument(arg, type_helper)),)
                         status
                     ),
                     $lifter,
@@ -491,7 +492,8 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!({$(for arg in &func.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };
@@ -521,7 +523,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
                 return uniffiRustCallAsync(
                   () => $(func.ffi_func().name())(
                     uniffiClonePointer(),
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                    $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),)
                   ),
                   $(DartCodeOracle::async_poll(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_complete(func, type_helper.get_ci())),
@@ -538,7 +540,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
                 return rustCall((status) {
                     $(func.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),) status
                     );
                 }, $error_handler);
             }
@@ -549,7 +551,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
                 return rustCallWithLifter(
                     (status) => $(func.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),) status
                     ),
                     $lifter,
                     $error_handler
@@ -831,7 +833,8 @@ fn generate_interface_method(
         quote!({$(for arg in method.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };
