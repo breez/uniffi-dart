@@ -2,7 +2,7 @@ use genco::prelude::*;
 use heck::ToLowerCamelCase;
 use uniffi_bindgen::interface::{AsType, Function};
 
-use super::defaults::render_argument_param;
+use super::defaults::{lower_argument, render_argument_param};
 use super::oracle::AsCodeType;
 use super::render::TypeHelperRenderer;
 use crate::gen::oracle::DartCodeOracle;
@@ -15,7 +15,8 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         quote!({$(for arg in &func.arguments() =>
             $(render_argument_param(
                 arg,
-                arg.as_renderable().render_type(&arg.as_type(), type_helper)
+                arg.as_renderable().render_type(&arg.as_type(), type_helper),
+                type_helper,
             )),
         )})
     };
@@ -45,7 +46,7 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {
                 return uniffiRustCallAsync(
                   () => $(func.ffi_func().name())(
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                    $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),)
                   ),
                   $(DartCodeOracle::async_poll(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_complete(func, type_helper.get_ci())),
@@ -59,13 +60,13 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         let call = if ret == quote!(void) {
             quote!(rustCall((status) {
                 $(func.ffi_func().name())(
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                    $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),) status
                 );
             }, $error_handler))
         } else {
             quote!(rustCallWithLifter(
                 (status) => $(func.ffi_func().name())(
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                    $(for arg in &func.arguments() => $(lower_argument(arg, type_helper)),) status
                 ),
                 $lifter,
                 $error_handler
