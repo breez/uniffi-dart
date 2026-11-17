@@ -10,7 +10,7 @@ use toml;
 use uniffi_bindgen::{BindingGenerator, Component, ComponentInterface};
 
 // use uniffi_bindgen::MergeWith;
-use self::render::Renderer;
+use self::render::{line_comment, Renderer};
 use self::types::TypeHelpersRenderer;
 use crate::gen::oracle::DartCodeOracle;
 
@@ -214,6 +214,15 @@ impl<'a> DartWrapper<'a> {
             const _uniffiAssetId = $(quoted(format!("package:{}/{}", package_name, asset_id_suffix)));
 
             $(if self.config.callback_dispatch => $(dispatch::dart_runtime(self.ci, self.config)))
+            $(if !self.config.callback_dispatch {
+                $(if let Some(warning) = dispatch::relay::missing_warning(self.ci, self.config) {
+                    $(line_comment(&[
+                        "Logged once per isolate when a callback vtable is installed",
+                        "without the callback relay library.",
+                    ]))
+                    const _uniffiCallbackRelayMissing = $warning;
+                })
+            })
 
             $(functions_definitions)
 
@@ -270,6 +279,23 @@ impl BindingGenerator for DartBindingGenerator {
             dispatch::validate(&components[0].ci)?;
             dispatch::write_native(&components[0].ci, &components[0].config, &settings.out_dir)?;
         }
+        // Outside dispatch mode, every component with callbacks goes through
+        // the relay companion when it's bundled. One companion serves all the
+        // components, which share one cdylib and asset id.
+        let relayed: Vec<_> = components.iter().map(|c| (&c.ci, &c.config)).collect();
+        let relay_runtime = match components.first() {
+            Some(first)
+                if !first.config.callback_dispatch
+                    && components.iter().any(|c| dispatch::relay::has_callbacks(&c.ci)) =>
+            {
+                dispatch::relay::write_relay(&relayed, &first.config, &settings.out_dir)?;
+                let hash = dispatch::relay::abi_hash(&relayed)?;
+                dispatch::relay::dart_runtime(&first.config, hash)
+            }
+            // The barrier asks the relay for queued calls. Without one there
+            // are none.
+            _ => "bool _uniffiRelayHasQueuedCalls() => false;\n".to_owned(),
+        };
         let write_dart = |filename: camino::Utf8PathBuf, tokens: dart::Tokens| -> Result<()> {
             let file = std::fs::File::create(filename)?;
             let mut w = fmt::IoWriter::new(file);
@@ -346,6 +372,8 @@ impl BindingGenerator for DartBindingGenerator {
                 const _uniffiAssetId = $(quoted(asset_id));
 
                 $(uniffi_function_definitions(ci, "_uniffiAssetId", |name| is_rustbuffer_fn(ci, name), false))
+
+                $(relay_runtime.as_str())
             };
             write_dart(settings.out_dir.join(format!("{}.dart", types::RUNTIME_MODULE)), runtime)?;
         }

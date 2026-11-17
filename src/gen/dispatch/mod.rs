@@ -1,4 +1,5 @@
-//! Opt-in generated native adapters for synchronous, 64-bit callback dispatch.
+//! The generated native companion: the callback relay, and the opt-in
+//! adapters for synchronous, 64-bit callback dispatch.
 use super::{oracle::DartCodeOracle, Config};
 use anyhow::{bail, Result};
 use genco::prelude::*;
@@ -8,6 +9,13 @@ use uniffi_bindgen::{
     interface::{AsType, Callable, FfiDefinition, FfiFunction, FfiType, Type},
     ComponentInterface,
 };
+
+pub mod relay;
+
+/// Runtime shared by the relay and dispatch companions.
+pub const CORE_RUNTIME: &str = include_str!("core.rs.txt");
+/// Runtime used only by opt-in dispatch.
+const DISPATCH_RUNTIME: &str = include_str!("dispatch.rs.txt");
 
 fn native_type(t: &FfiType) -> String {
     match t {
@@ -114,9 +122,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// companion library reports a different hash and fails loudly at dispatcher
 /// setup instead of corrupting memory through mismatched signatures.
 pub fn abi_hash(ci: &ComponentInterface) -> u64 {
-    let mut canonical = String::from(
-        "runtime-v2\nuniffi_dispatch_create(wake,api)\nuniffi_dispatch_drain\nuniffi_dispatch_close\nuniffi_dispatch_unregister\nuniffi_dispatch_has_routes\n",
-    );
+    // The runtime text is hashed too, so any runtime change is a new ABI.
+    let mut canonical = format!("dispatch-v3\n{CORE_RUNTIME}{DISPATCH_RUNTIME}");
     for def in ci.ffi_definitions() {
         match def {
             FfiDefinition::CallbackFunction(cb) => {
@@ -258,7 +265,7 @@ pub fn write_native(
     config: &Config,
     out: &camino::Utf8Path,
 ) -> Result<()> {
-    let mut source = include_str!("runtime.rs.txt").to_owned();
+    let mut source = format!("{CORE_RUNTIME}{DISPATCH_RUNTIME}");
     writeln!(
         source,
         "#[no_mangle]\npub extern \"C\" fn uniffi_dispatch_abi_hash() -> u64 {{ 0x{:016x} }}",
@@ -319,11 +326,11 @@ pub fn write_native(
             let vals = (1..args.len()).map(|i| format!("a{i},")).collect::<Vec<_>>().join("");
             let fieldname = field.name();
             let ret = result_type(cb.return_type());
-            writeln!(source, "unsafe extern \"C\" fn proxy_{kind}_{fieldname}({params}) -> {ret} {{\nlet r = route(a0, \"{kind}\"); let ep = endpoint(r.endpoint); let table: {name} = ep.vtable(\"{kind}\"); let input = Transfer(({vals}));\nlet result = dispatch(&ep, move || {{ let ({vals}) = input.take(); Transfer(unsafe {{ (table.r#{fieldname})(r.local{comma}{tail}) }}) }}).take();", comma=if tail.is_empty(){""}else{", "})?;
+            writeln!(source, "unsafe extern \"C\" fn proxy_{kind}_{fieldname}({params}) -> {ret} {{\nlet r = route(a0, \"{kind}\"); let ep = endpoint(r.endpoint); let table: {name} = ep.vtable(\"{kind}\"); let input = Transfer(({vals}));\nlet Some(result) = dispatch(&ep, move || {{ let ({vals}) = input.take(); Transfer(unsafe {{ (table.r#{fieldname})(r.local{comma}{tail}) }}) }}) else {{ {failed} return unsafe {{ std::mem::zeroed() }}; }}; let result = result.take();", comma=if tail.is_empty(){""}else{", "}, failed=if cb.has_rust_call_status_arg() { format!("unsafe {{ relay_failed(a{}) }};", args.len() - 1) } else { String::new() })?;
             if fieldname == "uniffi_clone" {
                 writeln!(source, "register(r.endpoint, result, \"{kind}\")")?;
             } else if fieldname == "uniffi_free" {
-                writeln!(source, "routes().lock().unwrap().remove(&a0).unwrap(); ep.push(Box::new(|| {{}})); result")?;
+                writeln!(source, "routes().lock().unwrap().remove(&a0).unwrap(); ep.push(Job::new(|| {{}})); result")?;
             } else {
                 writeln!(source, "result")?;
             }

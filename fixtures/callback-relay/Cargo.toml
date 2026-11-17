@@ -1,0 +1,23 @@
+[package]
+name = "callback_relay"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "callback_relay"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
+uniffi = { workspace = true, features = ["build"] }
+
+[build-dependencies]
+uniffi-dart = { path = "../../", features = ["build"] }
+
+[dev-dependencies]
+uniffi-dart = { path = "../../", features = ["bindgen-tests"] }
+uniffi = { workspace = true, features = ["bindgen-tests"] }
+anyhow = "1"

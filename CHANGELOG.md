@@ -13,6 +13,18 @@ All notable changes to uniffi-dart will be documented in this file.
   Rust's cancellation of an async callback is no longer forwarded to Dart. See
   [docs/callback-threads.md](docs/callback-threads.md).
 
+### Changes
+
+- Generate a callback relay library (`uniffi_dispatch/`) for every component
+  with callbacks. When it's bundled as a second native asset, Rust can call
+  every callback, including synchronous methods that return a value or throw,
+  from any thread (#161). Calls on the owning isolate's thread run inline, and
+  calls for an isolate that has exited fail instead of crashing. Without it,
+  the bindings log which synchronous callbacks will abort off the isolate's
+  thread. See [docs/callback-threads.md](docs/callback-threads.md).
+- `callback_dispatch` shares the relay's runtime, and wakes the isolate through
+  a port instead of a `NativeCallable.listener`. Rebuild its companion crate.
+
 ### Fixes
 
 - Give callback handles a random per-isolate prefix on 64-bit targets, so

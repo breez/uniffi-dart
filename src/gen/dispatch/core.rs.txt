@@ -1,0 +1,420 @@
+// Generated native runtime shared by the callback relay and opt-in dispatch.
+// Borrowed pointers stay valid while their FFI caller blocks. Owned payloads
+// pass through the request without cloning their native allocations.
+#![allow(non_snake_case, non_upper_case_globals, dead_code)]
+// Generated adapters use the same transfer path for void and value results.
+#![allow(clippy::unused_unit, clippy::let_unit_value, clippy::unit_arg, clippy::let_and_return)]
+use std::{
+    any::Any,
+    collections::{HashMap, VecDeque},
+    ffi::{c_char, c_void, CStr},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc, Condvar, Mutex, OnceLock,
+    },
+    time::Duration,
+};
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RustBuffer {
+    capacity: u64,
+    len: u64,
+    data: *mut u8,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RustCallStatus {
+    code: i8,
+    error_buf: RustBuffer,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ForeignBytes {
+    len: i32,
+    data: *const u8,
+}
+const CALL_UNEXPECTED_ERROR: i8 = 2;
+// Only generated C ABI argument/result tuples enter this wrapper. Pointer
+// pointees are kept alive by the synchronously blocked FFI caller. The owner
+// does not access them concurrently with the worker.
+struct Transfer<T>(T);
+unsafe impl<T> Send for Transfer<T> {}
+impl<T> Transfer<T> {
+    fn take(self) -> T {
+        self.0
+    }
+}
+/// Queued work for the owning isolate. `run` executes on that isolate's
+/// thread. If the isolate has gone, `abandon` runs instead, on whichever thread
+/// found out, and `run` is dropped without running.
+struct Job {
+    run: Box<dyn FnOnce() + Send>,
+    abandon: Box<dyn FnOnce() + Send>,
+}
+impl Job {
+    fn new(run: impl FnOnce() + Send + 'static) -> Self {
+        Self::with_abandon(run, || {})
+    }
+    fn with_abandon(
+        run: impl FnOnce() + Send + 'static,
+        abandon: impl FnOnce() + Send + 'static,
+    ) -> Self {
+        Self { run: Box::new(run), abandon: Box::new(abandon) }
+    }
+}
+fn abandon_all(jobs: impl IntoIterator<Item = Job>) {
+    for job in jobs {
+        drop(job.run);
+        (job.abandon)();
+    }
+}
+type CurrentIsolate = unsafe extern "C" fn() -> *mut c_void;
+type PostCObject = unsafe extern "C" fn(i64, *mut DartCObject) -> bool;
+#[repr(C)]
+struct DartApiEntry {
+    name: *const c_char,
+    function: *const (),
+}
+#[repr(C)]
+struct DartApi {
+    major: i32,
+    minor: i32,
+    functions: *const DartApiEntry,
+}
+/// A `Dart_CObject` holding `null` (`Dart_CObject_kNull`). The value array is at
+/// least as large as the C union, so the VM never reads past it.
+#[repr(C)]
+struct DartCObject {
+    kind: i32,
+    value: [u64; 5],
+}
+unsafe fn dart_api_function(data: *const DartApi, name: &[u8]) -> Option<*const ()> {
+    if data.is_null() || (*data).major != 2 {
+        return None;
+    }
+    let mut entry = (*data).functions;
+    while !(*entry).name.is_null() {
+        if CStr::from_ptr((*entry).name).to_bytes() == name {
+            return Some((*entry).function);
+        }
+        entry = entry.add(1);
+    }
+    None
+}
+#[cfg(target_os = "android")]
+fn log_warning(message: &str) {
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_write(priority: i32, tag: *const c_char, text: *const c_char) -> i32;
+    }
+    const ANDROID_LOG_WARN: i32 = 5;
+    if let Ok(text) = std::ffi::CString::new(message) {
+        unsafe {
+            __android_log_write(ANDROID_LOG_WARN, c"uniffi-dart".as_ptr(), text.as_ptr());
+        }
+    }
+}
+#[cfg(not(target_os = "android"))]
+fn log_warning(message: &str) {
+    eprintln!("uniffi-dart: {message}");
+}
+fn warn_once(flag: &AtomicBool, message: &str) {
+    if !flag.swap(true, Ordering::Relaxed) {
+        log_warning(message);
+    }
+}
+static STALL_WARNED: AtomicBool = AtomicBool::new(false);
+static DROP_WARNED: AtomicBool = AtomicBool::new(false);
+static FAILED_WARNED: AtomicBool = AtomicBool::new(false);
+const STALL_WARNING_AFTER: Duration = Duration::from_secs(2);
+fn warn_stalled() {
+    warn_once(
+        &STALL_WARNED,
+        "a synchronous callback has waited 2 s for its Dart isolate to run it, and is still \
+         waiting. If that isolate is blocked in a synchronous Rust call that waits for this \
+         thread, the program is deadlocked: make that Rust call async, or generate the \
+         bindings with callback_dispatch = true.",
+    );
+}
+fn warn_dropped() {
+    warn_once(
+        &DROP_WARNED,
+        "dropped a callback because the Dart isolate that registered it has exited, for \
+         example after a hot restart. Synchronous calls fail with an unexpected error, and \
+         async calls complete with one.",
+    );
+}
+fn warn_failed() {
+    warn_once(
+        &FAILED_WARNED,
+        "a callback that returns nothing threw on its Dart isolate after the Rust call had \
+         returned, so Rust could not see the error.",
+    );
+}
+/// Reports an unexpected error to a caller whose Dart isolate has gone.
+unsafe fn relay_failed(status: *mut RustCallStatus) {
+    if !status.is_null() {
+        (*status).code = CALL_UNEXPECTED_ERROR;
+        (*status).error_buf = RustBuffer { capacity: 0, len: 0, data: std::ptr::null_mut() };
+    }
+}
+#[derive(Default)]
+struct State {
+    jobs: VecDeque<Job>,
+    active: usize,
+    notified: bool,
+    closed: bool,
+    dead: bool,
+}
+struct Endpoint {
+    id: u64,
+    port: i64,
+    post: PostCObject,
+    current_isolate: Option<CurrentIsolate>,
+    owner_isolate: usize,
+    state: Mutex<State>,
+    ready: Condvar,
+    vtables: Mutex<HashMap<&'static str, Box<dyn Any + Send + Sync>>>,
+}
+impl Endpoint {
+    /// Posts `null` to the owner's port, which runs `uniffi_dispatch_drain`
+    /// there. A failed post means the isolate has exited: the endpoint dies and
+    /// returns its queued jobs for abandoning outside the lock.
+    fn wake(&self, state: &mut State) -> Vec<Job> {
+        if state.dead {
+            return Vec::new();
+        }
+        let mut message = DartCObject { kind: 0, value: [0; 5] };
+        if unsafe { (self.post)(self.port, &mut message) } {
+            state.notified = true;
+            Vec::new()
+        } else {
+            state.dead = true;
+            state.jobs.drain(..).collect()
+        }
+    }
+    /// Queues a job and wakes the owner for it. While the owner is draining or
+    /// pumping it will see the job anyway, and it is alive. Otherwise every
+    /// push posts, so a dead isolate is noticed on the next call even if an
+    /// earlier wake-up was lost with it. Extra wake-ups find an empty queue.
+    fn push(&self, job: Job) {
+        let abandoned = {
+            let mut s = self.state.lock().unwrap();
+            if s.dead {
+                vec![job]
+            } else {
+                assert!(!s.closed, "dispatch after close");
+                s.jobs.push_back(job);
+                self.ready.notify_one();
+                if s.active == 0 {
+                    self.wake(&mut s)
+                } else {
+                    Vec::new()
+                }
+            }
+        };
+        abandon_all(abandoned);
+    }
+    /// Checks that the owner is still alive, abandoning queued jobs if not.
+    fn probe(&self) {
+        let abandoned = {
+            let mut s = self.state.lock().unwrap();
+            self.wake(&mut s)
+        };
+        abandon_all(abandoned);
+    }
+    fn is_dead(&self) -> bool {
+        self.state.lock().unwrap().dead
+    }
+    fn enter(&self, drain: bool) {
+        OWNERS.with(|owners| owners.borrow_mut().push(self.id));
+        let mut s = self.state.lock().unwrap();
+        assert!(!s.closed);
+        if drain {
+            s.notified = false;
+        }
+        s.active += 1;
+    }
+    fn leave(&self) {
+        OWNERS.with(|owners| assert_eq!(owners.borrow_mut().pop(), Some(self.id)));
+        let abandoned = {
+            let mut s = self.state.lock().unwrap();
+            s.active -= 1;
+            if s.active == 0 && !s.jobs.is_empty() {
+                self.wake(&mut s)
+            } else {
+                Vec::new()
+            }
+        };
+        abandon_all(abandoned);
+    }
+    fn pump(&self, wait: bool) -> bool {
+        let job = {
+            let mut s = self.state.lock().unwrap();
+            while wait && s.jobs.is_empty() {
+                let (next, timeout) =
+                    self.ready.wait_timeout(s, Duration::from_millis(10)).unwrap();
+                s = next;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+            s.jobs.pop_front()
+        };
+        if let Some(job) = job {
+            (job.run)();
+            true
+        } else {
+            false
+        }
+    }
+    /// True on the owning isolate's thread: while it drains or pumps this
+    /// endpoint, or whenever the VM reports that isolate as current.
+    fn on_owner_thread(&self) -> bool {
+        OWNERS.with(|owners| owners.borrow().last() == Some(&self.id))
+            || self
+                .current_isolate
+                .is_some_and(|current| unsafe { current() as usize == self.owner_isolate })
+    }
+    fn vtable<T: Clone + 'static>(&self, name: &'static str) -> T {
+        self.vtables.lock().unwrap().get(name).unwrap().downcast_ref::<T>().unwrap().clone()
+    }
+}
+thread_local! { static OWNERS: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) }; }
+static NEXT: AtomicU64 = AtomicU64::new(1);
+fn next_id() -> u64 {
+    let mut current = NEXT.load(Ordering::Relaxed);
+    loop {
+        let next = current.checked_add(2).expect("dispatch handle space exhausted");
+        match NEXT.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return current,
+            Err(actual) => current = actual,
+        }
+    }
+}
+static ENDPOINTS: OnceLock<Mutex<HashMap<u64, Arc<Endpoint>>>> = OnceLock::new();
+fn endpoints() -> &'static Mutex<HashMap<u64, Arc<Endpoint>>> {
+    ENDPOINTS.get_or_init(Default::default)
+}
+fn endpoint(id: u64) -> Arc<Endpoint> {
+    endpoints().lock().unwrap().get(&id).expect("unknown dispatch endpoint").clone()
+}
+/// Runs `f` on the endpoint's isolate and returns its result: inline when this
+/// is already that isolate's thread, otherwise by queueing it and blocking.
+/// Returns `None` if the isolate has gone.
+fn dispatch<R: Send + 'static>(
+    ep: &Arc<Endpoint>,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Option<R> {
+    if ep.on_owner_thread() {
+        return Some(f());
+    }
+    let (tx, rx) = mpsc::sync_channel(1);
+    // Abandoning drops `run` and with it `tx`, which ends the wait below.
+    ep.push(Job::new(move || {
+        let _ = tx.send(f());
+    }));
+    match rx.recv_timeout(STALL_WARNING_AFTER) {
+        Ok(value) => Some(value),
+        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            ep.probe();
+            if !ep.is_dead() {
+                warn_stalled();
+            }
+            rx.recv().ok()
+        }
+    }
+}
+/// Runs `f` on the endpoint's isolate without waiting for it: inline on that
+/// isolate's thread, otherwise queued. If the isolate has gone, `abandon` runs.
+fn post_to_owner(
+    ep: &Arc<Endpoint>,
+    f: impl FnOnce() + Send + 'static,
+    abandon: impl FnOnce() + Send + 'static,
+) {
+    if ep.on_owner_thread() {
+        f();
+    } else {
+        ep.push(Job::with_abandon(f, abandon));
+    }
+}
+struct Active(Arc<Endpoint>);
+impl Drop for Active {
+    fn drop(&mut self) {
+        self.0.leave();
+    }
+}
+#[no_mangle]
+/// # Safety
+/// `data` must be `NativeApi.initializeApiDLData` from the current Dart VM, and
+/// `port` the native port of a `RawReceivePort` owned by the calling isolate.
+unsafe extern "C" fn uniffi_dispatch_create(port: i64, data: *const DartApi) -> u64 {
+    let (Some(current), Some(post)) = (
+        dart_api_function(data, b"Dart_CurrentIsolate"),
+        dart_api_function(data, b"Dart_PostCObject"),
+    ) else {
+        return 0;
+    };
+    let current = std::mem::transmute::<*const (), CurrentIsolate>(current);
+    let post = std::mem::transmute::<*const (), PostCObject>(post);
+    let owner_isolate = current() as usize;
+    if owner_isolate == 0 {
+        return 0;
+    }
+    create_endpoint(port, post, Some(current), owner_isolate)
+}
+fn create_endpoint(
+    port: i64,
+    post: PostCObject,
+    current_isolate: Option<CurrentIsolate>,
+    owner_isolate: usize,
+) -> u64 {
+    let id = next_id();
+    endpoints().lock().unwrap().insert(
+        id,
+        Arc::new(Endpoint {
+            id,
+            port,
+            post,
+            current_isolate,
+            owner_isolate,
+            state: Mutex::new(State::default()),
+            ready: Condvar::new(),
+            vtables: Mutex::new(HashMap::new()),
+        }),
+    );
+    id
+}
+/// Runs queued jobs on the owning isolate's thread, called from its port.
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_drain(id: u64) {
+    let Some(ep) = endpoints().lock().unwrap().get(&id).cloned() else {
+        return;
+    };
+    ep.enter(true);
+    let _active = Active(ep.clone());
+    for _ in 0..64 {
+        if !ep.pump(false) {
+            break;
+        }
+    }
+}
+/// Whether calls are queued for the endpoint's isolate to run.
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_pending(id: u64) -> bool {
+    let Some(ep) = endpoints().lock().unwrap().get(&id).cloned() else {
+        return false;
+    };
+    let pending = !ep.state.lock().unwrap().jobs.is_empty();
+    pending
+}
+/// Checks every endpoint for an exited isolate, so jobs queued to it complete
+/// with an error instead of waiting forever. Called when a vtable is installed,
+/// which a new isolate does after a hot restart.
+fn probe_endpoints() {
+    let all: Vec<_> = endpoints().lock().unwrap().values().cloned().collect();
+    for ep in all {
+        ep.probe();
+    }
+}

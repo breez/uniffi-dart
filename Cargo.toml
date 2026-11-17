@@ -67,6 +67,7 @@ members = [
     "fixtures/callbacks",
     "fixtures/callback-thread-relay",
     "fixtures/callback-threads",
+    "fixtures/callback-relay",
     "fixtures/benchmarks",
     "fixtures/custom_types",
     "fixtures/conversion-temporaries",
