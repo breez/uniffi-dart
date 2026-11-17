@@ -8,7 +8,7 @@ use uniffi_bindgen::pipeline::general::nodes::Literal;
 use super::defaults::render_argument_param;
 use super::stream::generate_stream;
 use crate::gen::callback_interface::{
-    generate_callback_functions, generate_callback_interface,
+    callback_impl_class, generate_callback_functions, generate_callback_interface,
     generate_callback_interface_vtable_init_function, generate_callback_vtable_interface,
 };
 use crate::gen::oracle::{AsCodeType, DartCodeOracle};
@@ -98,8 +98,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             $interface
             $rust_impl
             $vtable_interface
-            $functions
-            $vtable_init
+            $(callback_impl_class(obj.name(), functions, vtable_init))
         );
     } else if obj.is_trait_interface() {
         return generate_trait_object(obj, type_helper);

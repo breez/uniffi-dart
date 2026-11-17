@@ -38,7 +38,7 @@ void main() {
             done.complete(result.callStatus.code);
           });
       try {
-        asyncByteSourceValue(handle.address, completion.nativeFunction, 0, out);
+        UniffiCallbackInterfaceAsyncByteSourceImpl.valueCallback(handle.address, completion.nativeFunction, 0, out);
         expect(
           await done.future.timeout(Duration(seconds: 5)),
           CALL_UNEXPECTED_ERROR,
@@ -52,7 +52,7 @@ void main() {
         tracker.fail = false;
         completion.close();
         tracker.calloc.free(out);
-        asyncByteSourceFreeCallback(handle.address);
+        UniffiCallbackInterfaceAsyncByteSourceImpl.uniffiFree(handle.address);
       }
     },
   );

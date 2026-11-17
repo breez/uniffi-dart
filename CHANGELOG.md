@@ -2,6 +2,17 @@
 
 All notable changes to uniffi-dart will be documented in this file.
 
+## Unreleased
+
+### Fixes
+
+- Generate each callback type's callback functions, function pointers and
+  vtable as static members of a `UniffiCallbackInterface<Name>Impl` class.
+  As top-level `{trait}{Method}`, `{trait}FreeCallback` and `init{Trait}VTable`
+  functions they could collide with exported functions and with each other,
+  and the bindings didn't compile. Code that called them directly needs the
+  class prefix.
+
 ## v0.2.1+v0.31.2
 
 ### Changes

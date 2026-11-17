@@ -43,7 +43,7 @@ void main() {
           done.complete(result.callStatus.code);
         });
     try {
-      asyncInputSourceValue(
+      UniffiCallbackInterfaceAsyncInputSourceImpl.valueCallback(
         handle.address,
         invalidUtf8,
         completion.nativeFunction,
@@ -59,7 +59,7 @@ void main() {
     } finally {
       completion.close();
       calloc.free(out);
-      asyncInputSourceFreeCallback(handle.address);
+      UniffiCallbackInterfaceAsyncInputSourceImpl.uniffiFree(handle.address);
     }
   });
   test('result lowering failure reaches the Rust future as an error', () async {
@@ -121,7 +121,7 @@ void main() {
             if (!done.isCompleted) done.complete(code);
           });
       try {
-        asyncByteSourceValue(handle.address, completion.nativeFunction, 0, out);
+        UniffiCallbackInterfaceAsyncByteSourceImpl.valueCallback(handle.address, completion.nativeFunction, 0, out);
         expect(await done.future.timeout(Duration(seconds: 5)), entry.value.$2);
         await Future<void>.delayed(Duration.zero);
         expect(completions, 1);
@@ -133,7 +133,7 @@ void main() {
       } finally {
         completion.close();
         calloc.free(out);
-        asyncByteSourceFreeCallback(handle.address);
+        UniffiCallbackInterfaceAsyncByteSourceImpl.uniffiFree(handle.address);
       }
     });
   }
@@ -142,7 +142,7 @@ void main() {
     final handle = FfiConverterCallbackInterfaceAsyncByteSource.lower(
       ByteSource(() async => 42),
     );
-    asyncByteSourceFreeCallback(handle.address);
+    UniffiCallbackInterfaceAsyncByteSourceImpl.uniffiFree(handle.address);
     final out = calloc<UniffiForeignFuture>();
     final done = Completer<int>();
     final completion =
@@ -155,7 +155,7 @@ void main() {
           if (!done.isCompleted) done.complete(code);
         });
     try {
-      asyncByteSourceValue(handle.address, completion.nativeFunction, 0, out);
+      UniffiCallbackInterfaceAsyncByteSourceImpl.valueCallback(handle.address, completion.nativeFunction, 0, out);
       expect(
         await done.future.timeout(Duration(seconds: 5)),
         CALL_UNEXPECTED_ERROR,
@@ -189,7 +189,7 @@ void main() {
               }
             });
         try {
-          asyncByteSourceValue(
+          UniffiCallbackInterfaceAsyncByteSourceImpl.valueCallback(
             handle.address,
             completion.nativeFunction,
             0,
@@ -216,7 +216,7 @@ void main() {
         } finally {
           completion.close();
           calloc.free(out);
-          asyncByteSourceFreeCallback(handle.address);
+          UniffiCallbackInterfaceAsyncByteSourceImpl.uniffiFree(handle.address);
         }
       },
     );
