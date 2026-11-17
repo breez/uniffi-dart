@@ -1,0 +1,16 @@
+# The older key names, as the Breez SDK's other bindings use them.
+[bindings.dart.custom_types.u128]
+type_name = "BigInt"
+into_custom = "BigInt.parse({})"
+from_custom = "{}.toString()"
+
+[bindings.dart.custom_types.Url]
+type_name = "Uri"
+lift = "Uri.parse({})"
+lower = "{}.toString()"
+
+# No type_name: the imported library declares `Money`.
+[bindings.dart.custom_types.Money]
+imports = ["test/money.dart"]
+lift = "Money.fromCents({})"
+lower = "{}.cents"

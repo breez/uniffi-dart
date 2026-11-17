@@ -1,0 +1,21 @@
+[package]
+name = "custom_type_config"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "custom_type_config"
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+async-trait = "0.1"
+uniffi = { workspace = true, features = ["build"] }
+
+[build-dependencies]
+uniffi-dart = { path = "../../", features = ["build"] }
+
+[dev-dependencies]
+uniffi-dart = { path = "../../", features = ["bindgen-tests"] }
+uniffi = { workspace = true, features = ["bindgen-tests"] }
+anyhow = "1"

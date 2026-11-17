@@ -2,6 +2,16 @@
 
 All notable changes to uniffi-dart will be documented in this file.
 
+## Unreleased
+
+### Changes
+
+- Map custom types to Dart types with `[bindings.dart.custom_types.<Name>]`,
+  using the keys UniFFI's Kotlin and Swift bindings accept: `type_name`,
+  `imports`, `lift` and `lower`, and the older `into_custom` and `from_custom`.
+  Unconfigured custom types are unchanged. See
+  [docs/custom-types.md](docs/custom-types.md).
+
 ## v0.2.1+v0.31.2
 
 ### Changes

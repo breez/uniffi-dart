@@ -131,6 +131,13 @@ The active `time-types` fixture covers timestamps in functions, objects,
 callbacks, async results, records, optionals, lists and maps, as well as range
 checks and precision boundaries.
 
+## Custom types
+
+Custom types are `typedef`s of their builtin by default. Map one to a Dart type,
+for example a `u128` sent as a string to `BigInt`, with
+`[bindings.dart.custom_types.<Name>]` in `uniffi.toml`, using the same keys as
+UniFFI's Kotlin and Swift bindings. See [docs/custom-types.md](docs/custom-types.md).
+
 ## Versioning
 
 uniffi-dart is versioned independently from uniffi-rs. We follow the
