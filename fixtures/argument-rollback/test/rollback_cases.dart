@@ -122,13 +122,13 @@ void main() {
   final initialHandle = FfiConverterCallbackInterfaceConsumer.lower(
     ReentrantConsumer(),
   );
-  consumerFreeCallback(initialHandle.address);
+  UniffiCallbackInterfaceConsumerImpl.uniffiFree(initialHandle.address);
   final returningHandle = FfiConverterCallbackInterfaceReturningConsumer.lower(
     Returning(),
   );
-  returningConsumerFreeCallback(returningHandle.address);
+  UniffiCallbackInterfaceReturningConsumerImpl.uniffiFree(returningHandle.address);
   final pureHandle = FfiConverterCallbackInterfacePureConsumer.lower(Pure());
-  pureConsumerFreeCallback(pureHandle.address);
+  UniffiCallbackInterfacePureConsumerImpl.uniffiFree(pureHandle.address);
   tracker.calloc.retainForProcessLifetime();
   tearDown(() {
     tracker.calloc.reset();

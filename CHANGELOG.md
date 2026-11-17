@@ -35,6 +35,12 @@ All notable changes to uniffi-dart will be documented in this file.
 - Give callback handles a random per-isolate prefix on 64-bit targets, so
   handles left over from before a hot restart can't reach objects in the new
   isolate
+- Generate each callback type's callback functions, function pointers and
+  vtable as static members of a `UniffiCallbackInterface<Name>Impl` class.
+  As top-level `{trait}{Method}`, `{trait}FreeCallback` and `init{Trait}VTable`
+  functions they could collide with exported functions and with each other,
+  and the bindings didn't compile. Code that called them directly needs the
+  class prefix.
 
 ## v0.2.1+v0.31.2
 

@@ -102,8 +102,8 @@ void main() {
 
   ensureInitialized();
   // Initialize all VTables
-  initForeignGettersVTable();
-  initStoredForeignStringifierVTable();
+  UniffiCallbackInterfaceForeignGettersImpl.uniffiInit();
+  UniffiCallbackInterfaceStoredForeignStringifierImpl.uniffiInit();
 
   final callback = DartGetters();
   final rustGetters = RustGetters();
