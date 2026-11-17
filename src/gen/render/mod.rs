@@ -6,6 +6,31 @@ use uniffi_bindgen::ComponentInterface;
 use super::oracle::AsCodeType;
 use super::{callback_interface, compounds, custom, enums, objects, primitives, records};
 
+/// Emits `//` comment lines into the generated Dart. `quote!` drops Rust `//`
+/// comments, and turns `///` into `#[doc]` attributes.
+pub fn line_comment(lines: &[&str]) -> dart::Tokens {
+    comment_lines("//", lines)
+}
+
+/// Emits `///` documentation lines into the generated Dart.
+pub fn doc_comment(lines: &[&str]) -> dart::Tokens {
+    comment_lines("///", lines)
+}
+
+fn comment_lines(marker: &str, lines: &[&str]) -> dart::Tokens {
+    let mut tokens = dart::Tokens::new();
+    for line in lines {
+        tokens.push();
+        if line.is_empty() {
+            tokens.append(marker.to_string());
+        } else {
+            tokens.append(format!("{marker} {line}"));
+        }
+    }
+    tokens.push();
+    tokens
+}
+
 pub trait Renderer<T> {
     fn render(&self) -> T;
 }

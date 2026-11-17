@@ -297,6 +297,21 @@ impl BindingGenerator for DartBindingGenerator {
             );
         }
 
+        // The shared runtime exports `uniffiCallbackBarrier` to every component.
+        for Component { ci, .. } in components {
+            if ci
+                .function_definitions()
+                .iter()
+                .any(|f| DartCodeOracle::fn_name(f.name()) == "uniffiCallbackBarrier")
+            {
+                bail!(
+                    "component `{}` exports a function named `uniffiCallbackBarrier`, \
+                     which the shared runtime reserves",
+                    ci.namespace()
+                );
+            }
+        }
+
         // The shared runtime goes out once for the whole generation, ahead of the
         // per-component files that import it. The first component supplies the
         // `rustbuffer_*` symbols and asset id for all of them: only library mode
