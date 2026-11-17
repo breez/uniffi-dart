@@ -64,6 +64,12 @@ calling back synchronously.
 
 - Calling a sync method that returns a value or can throw, or `uniffi_clone`,
   from another thread still aborts. The follow-up PR fixes that.
+- Calls on the isolate's own thread can now run out of order. A
+  fire-and-forget method is queued, but a value-returning method on the same
+  object still runs inline. If Rust calls `log()` and then `logCount()` in one
+  call, `logCount()` runs first. The `callback-threads` fixture pins this down.
+  With the follow-up PR's companion bundled, every callback made on the
+  isolate's thread runs inline again, so the order comes back.
 - If the owning isolate exits while Rust still holds its callbacks, the next
   call aborts the process with `Callback invoked after it has been deleted`. I
   measured this on Dart 3.14 with a listener whose isolate had exited, with
@@ -88,8 +94,9 @@ trait from std threads and tokio tasks. Its cases run in a child process so a
 VM abort fails the test instead of the runner. They cover async methods, 32
 concurrent calls, fire-and-forget calls, frees on worker threads, a Rust future
 dropped before Dart completes, foreign-trait errors, barrier ordering over 200
-calls from one thread, cross-isolate handle prefixes, and a program exiting
-while Rust holds a callback. With fire-and-forget methods and frees switched
+calls from one thread, a value method overtaking an earlier fire-and-forget
+call, cross-isolate handle prefixes, and a program exiting while Rust holds a
+callback. With fire-and-forget methods and frees switched
 back to `Pointer.fromFunction`, the child aborts with the #161 error and both
 fixture tests fail.
 

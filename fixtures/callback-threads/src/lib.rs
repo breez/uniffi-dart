@@ -26,6 +26,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 pub trait EventSink: Send + Sync {
     async fn on_event(&self, event: String) -> u32;
     fn log(&self, message: String);
+    fn log_count(&self) -> u32;
 }
 
 #[derive(Debug, uniffi::Error)]
@@ -117,6 +118,13 @@ pub fn log_from_tokio(sink: Box<dyn EventSink>, tasks: u32) {
 #[uniffi::export]
 pub fn log_here(sink: Box<dyn EventSink>, message: String) {
     sink.log(message);
+}
+
+/// Calls `log` and then `log_count` on the calling thread, and returns the count.
+#[uniffi::export]
+pub fn log_then_count(sink: Box<dyn EventSink>, message: String) -> u32 {
+    sink.log(message);
+    sink.log_count()
 }
 
 /// Logs `count` numbered messages from one worker thread, in order, and joins it.

@@ -30,6 +30,10 @@ synchronous Rust function. So:
 
 - A Rust function that calls a fire-and-forget method returns before the Dart
   method runs.
+- A sync method that returns a value still runs inline, so it can run before
+  an earlier fire-and-forget call on the same object. If Rust calls `log()`
+  and then `logCount()` during one call on the isolate's thread, `logCount()`
+  doesn't see the log yet.
 - An exception from a fire-and-forget method can't reach Rust. It becomes an
   uncaught error in the isolate's zone.
 - A callback object that Rust drops is removed from the bindings' handle map
