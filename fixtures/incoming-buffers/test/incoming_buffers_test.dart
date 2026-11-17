@@ -225,7 +225,7 @@ void main() {
       final before = liveBytes();
       final malformed = toRustBuffer(Uint8List.fromList([0, 0, 1, 0]));
       final later = FfiConverterUint8List.lower(Uint8List(32));
-      bufferConsumerConsume(handle.address, malformed, later, result, status);
+      UniffiCallbackInterfaceBufferConsumerImpl.consumeCallback(handle.address, malformed, later, result, status);
       expect(consumer.saved, isEmpty);
       expect(
         () => checkCallStatus(NullRustCallStatusErrorHandler(), status),
@@ -233,7 +233,7 @@ void main() {
       );
       expect(liveBytes(), before);
     } finally {
-      bufferConsumerFreeCallback(handle.address);
+      UniffiCallbackInterfaceBufferConsumerImpl.uniffiFree(handle.address);
       calloc.free(status);
       calloc.free(result);
     }
