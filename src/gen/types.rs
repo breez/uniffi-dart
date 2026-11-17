@@ -262,6 +262,7 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
         import "dart:ffi";
         import "dart:io" show Platform, File, Directory;
         import "dart:isolate";
+        import "dart:math" show Random;
         import "dart:typed_data";
         import "package:ffi/ffi.dart";
 
@@ -639,11 +640,23 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 return done.future;
             }
 
+            $(line_comment(&[
+                "Rust keeps a callback's vtable and handles for the life of the process,",
+                "but each isolate numbers its handles itself. After a Flutter hot",
+                "restart, Rust can still hold handles from the old isolate. A random",
+                "per-isolate prefix makes those miss in the new isolate's maps instead",
+                "of reaching (or freeing) its objects. Until callback handles are",
+                "lowered as Uint64, 32-bit targets carry them in a pointer, so they get",
+                "no prefix there.",
+            ]))
+            final int _uniffiHandlePrefix =
+                sizeOf<IntPtr>() == 8 ? (Random().nextInt(1 << 30) + 1) << 32 : 0;
+
             // As of uniffi 0.30, foreign handles must always have the lowest bit set
             // This is achieved here with an odd number sequence.
             class UniffiHandleMap<T> {
                 final Map<int, T> _map = {};
-                int _counter = 1;
+                int _counter = _uniffiHandlePrefix + 1;
 
                 int insert(T obj) {
                 final handle = _counter;

@@ -60,7 +60,9 @@ still runs to completion. Rust ignores the late result.
 UniFFI keeps one vtable per callback type for the whole process. An isolate
 installs its vtable the first time it passes a callback of that type to Rust,
 replacing any earlier one. From then on, Rust calls of that type reach that
-isolate, including calls for objects registered by other isolates.
+isolate, including calls for objects registered by other isolates. On 64-bit
+targets those fail with a stale-handle error. On 32-bit targets they can reach
+an unrelated object with the same handle.
 
 Use callbacks from one long-lived isolate, normally the main isolate. Don't pass
 callbacks to Rust from `Isolate.run`, Flutter's `compute` or any other isolate
@@ -80,9 +82,9 @@ loaded, together with every callback object and vtable that Rust holds.
 
 - Until the new isolate passes a callback of a given type to Rust, Rust still
   calls the old isolate's listeners, and the process aborts.
-- After that, Rust calls the new isolate, including for objects that the old
-  isolate registered. Each isolate numbers its handles from the start, so such
-  a handle can reach an unrelated object in the new isolate.
+- After that, Rust calls the new isolate. Handles carry a random per-isolate
+  prefix on 64-bit targets, so a handle from the old isolate fails as a stale
+  handle instead of reaching an object in the new one.
 
 Release Rust-held callbacks before a hot restart, for example by disconnecting,
 or use a full restart.
