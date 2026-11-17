@@ -24,24 +24,27 @@ void rejects<T extends Object>(void Function() action) {
 }
 
 class SyncU64 implements U64Callback {
-  final Object Function(BigInt) body;
+  final BigInt Function(BigInt) body;
   SyncU64(this.body);
   @override
-  Object transform(BigInt value) => body(value);
+  BigInt transform(BigInt value) => body(value);
   @override
-  Object transformAlias(U64Alias value) => body(value);
+  U64Alias transformAlias(U64Alias value) => body(value);
   @override
-  List<Object?> transformSequence(List<BigInt?> values) => [42, ...values];
+  List<BigInt?> transformSequence(List<BigInt?> values) => [
+    BigInt.from(42),
+    ...values,
+  ];
 }
 
 class AsyncU64 implements AsyncU64Callback {
-  final Object Function(BigInt) body;
+  final BigInt Function(BigInt) body;
   AsyncU64(this.body);
   @override
-  Future<Object> transform(BigInt value) async => body(value);
+  Future<BigInt> transform(BigInt value) async => body(value);
   @override
-  Future<List<Object?>> transformSequence(List<BigInt?> values) async => [
-    42,
+  Future<List<BigInt?>> transformSequence(List<BigInt?> values) async => [
+    BigInt.from(42),
     ...values,
   ];
 }
@@ -243,17 +246,36 @@ final Map<String, FutureOr<void> Function()> u64Cases = {
       box.dispose();
     }
   },
-  'callbacks receive BigInt and can return int or BigInt': () {
+  'callback results are statically BigInt': () async {
+    // Each assignment compiles only if the interface declares the result as
+    // BigInt. An Object result would need an explicit cast.
+    final U64Callback sync = SyncU64((v) => v);
+    final AsyncU64Callback asyncCallback = AsyncU64((v) => v);
+    final BigInt scalar = sync.transform(u64Max);
+    final U64Alias alias = sync.transformAlias(u64Max);
+    final List<BigInt?> sequence = sync.transformSequence([u64Max]);
+    final BigInt Function(BigInt) tearOff = sync.transform;
+    final BigInt awaited = await asyncCallback.transform(u64Max);
+    final List<BigInt?> awaitedSequence = await asyncCallback
+        .transformSequence([null]);
+    equal(scalar, u64Max);
+    equal(alias, u64Max);
+    equal(sequence.last, u64Max);
+    equal(tearOff(BigInt.one), BigInt.one);
+    equal(awaited, u64Max);
+    equal(awaitedSequence.last, null);
+  },
+  'callbacks receive and return BigInt': () {
     equal(callbackAlias(callback: SyncU64((v) => v), v: u64Max), u64Max);
     equal(
-      callbackAlias(callback: SyncU64((v) => 42), v: u64Max),
+      callbackAlias(callback: SyncU64((v) => BigInt.from(42)), v: u64Max),
       BigInt.from(42),
     );
     equal(
       callbackU64(
         callback: SyncU64((v) {
           equal(v, u64Max);
-          return 42;
+          return BigInt.from(42);
         }),
         v: u64Max,
       ),
@@ -268,8 +290,8 @@ final Map<String, FutureOr<void> Function()> u64Cases = {
     equal(result[1], null);
     equal(result[2], u64Max);
   },
-  'invalid sync callback results report an error': () {
-    for (final value in <Object>[-1, u64Max + BigInt.one, '42']) {
+  'out-of-range sync callback results report an error': () {
+    for (final value in [-BigInt.one, u64Max + BigInt.one]) {
       try {
         callbackU64(callback: SyncU64((_) => value), v: 1);
       } catch (error) {
@@ -286,7 +308,7 @@ final Map<String, FutureOr<void> Function()> u64Cases = {
       await asyncCallbackU64(
         callback: AsyncU64((v) {
           equal(v, u64Max);
-          return 42;
+          return BigInt.from(42);
         }),
         v: u64Max,
       ),
@@ -303,8 +325,8 @@ final Map<String, FutureOr<void> Function()> u64Cases = {
     equal(result.first, BigInt.from(42));
     equal(result.last, u64Max);
   },
-  'invalid async callback results complete with an error': () async {
-    for (final value in <Object>[-1, u64Max + BigInt.one, '42']) {
+  'out-of-range async callback results complete with an error': () async {
+    for (final value in [-BigInt.one, u64Max + BigInt.one]) {
       try {
         await asyncCallbackU64(
           callback: AsyncU64((_) => value),

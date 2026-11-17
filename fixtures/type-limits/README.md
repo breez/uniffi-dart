@@ -27,7 +27,7 @@ The cases include scalar boundaries, 1,000 deterministic values, byte offsets,
 range/type rejection before a Rust function is entered, checked int conversion,
 unchanged smaller integer types, defaults, nullable values, nested lists/maps,
 record and enum construction, custom aliases, objects, synchronous and async
-callbacks, and invalid callback results. The standalone runner uses explicit
+callbacks, and out-of-range callback results. The standalone runner uses explicit
 checks, so AOT does not depend on assertions being enabled.
 
 The component also exports a record named `BigInt`. All cases run with that
