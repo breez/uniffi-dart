@@ -497,8 +497,8 @@ mod tests {
         );
         let deliveries = deliveries(&ci);
         for (field, expected) in [
+            // UniFFI 0.29's vtables have no uniffi_clone slot.
             ("uniffi_free", Delivery::Free),
-            ("uniffi_clone", Delivery::Wait),
             ("note", Delivery::Void),
             ("value", Delivery::Wait),
             ("check", Delivery::Wait),
