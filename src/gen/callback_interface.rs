@@ -218,8 +218,8 @@ fn generate_callback_methods_definitions(
     let ret_type = if method.is_async() {
         if let Some(ret) = method.return_type() {
             let rendered = ret.as_renderable().render_type(ret, type_helper);
-            let rendered = if super::unsigned::accepts_u64(ret) {
-                super::unsigned::input_type(ret)
+            let rendered = if super::unsigned::accepts_u64(ret, type_helper) {
+                super::unsigned::input_type(ret, type_helper)
             } else {
                 rendered
             };
@@ -229,8 +229,8 @@ fn generate_callback_methods_definitions(
         }
     } else if let Some(ret) = method.return_type() {
         let rendered = ret.as_renderable().render_type(ret, type_helper);
-        if super::unsigned::accepts_u64(ret) {
-            super::unsigned::input_type(ret)
+        if super::unsigned::accepts_u64(ret, type_helper) {
+            super::unsigned::input_type(ret, type_helper)
         } else {
             rendered
         }
@@ -391,7 +391,7 @@ pub fn generate_callback_functions(
             // and the future still completes with an error.
             let success_return = if let Some(ret) = m.return_type() {
                 let converter = ret.as_codetype().ffi_converter_name();
-                let value = super::unsigned::normalize_for_lower(ret, quote!(result));
+                let value = super::unsigned::normalize_for_lower(ret, quote!(result), type_helper);
                 quote!(resultStruct.returnValue = $(&converter).lower($value);)
             } else {
                 quote!()
@@ -468,7 +468,7 @@ pub fn generate_callback_functions(
         } else {
             // Handle return value using the oracle
             let call_dart_method = if let Some(ret) = m.return_type() {
-                DartCodeOracle::callback_return_handling(ret, method_name, arg_names)
+                DartCodeOracle::callback_return_handling(ret, method_name, arg_names, type_helper)
             } else {
                 // Handle void return types
                 DartCodeOracle::callback_void_handling(method_name, arg_names)

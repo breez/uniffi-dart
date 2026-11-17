@@ -655,7 +655,7 @@ fn trait_method_call(
     let mut lowered_args = Vec::new();
     for (arg, expr) in method.arguments().into_iter().zip(arg_exprs.iter()) {
         type_helper.include_once_check(&arg.as_codetype().canonical_name(), &arg.as_type());
-        lowered_args.push(DartCodeOracle::type_lower_fn(&arg.as_type(), expr.clone()));
+        lowered_args.push(DartCodeOracle::type_lower_fn(&arg.as_type(), expr.clone(), type_helper));
     }
 
     if let Some(ret) = method.return_type() {
