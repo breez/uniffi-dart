@@ -1,6 +1,6 @@
 # Opt-in synchronous callback dispatch
 
-Without this option, the bindings deliver async callback methods and frees through `NativeCallable.listener`, which Rust may call from any thread (see [callback-threads.md](callback-threads.md)). Synchronous callback methods use `Pointer.fromFunction`, which aborts when Rust invokes them from another thread. With this option, the free also uses `Pointer.fromFunction`, and the companion relays every synchronous callback.
+Without this option, the bindings use the callback relay companion when it's bundled: callbacks run inline on the owning isolate's thread and are queued to it from other threads (see [callback-threads.md](callback-threads.md)). A synchronous Rust call made from Dart that waits for another thread's callback deadlocks there, because the isolate is blocked in the Rust call. This option also runs every Rust call on a worker thread while the isolate keeps running callbacks, which supports that case. It shares the relay's runtime and generated crate location.
 
 This is experimental and disabled by default. **Do not use it in `Isolate.run`,
 Flutter `compute`, hot restart, or isolates that can be killed while Rust retains
@@ -53,7 +53,7 @@ Opting in moves native entry calls, including calls without callback arguments, 
 
 ## Lifetime and shutdown
 
-While a Dart call waits for native work, it pumps its own queue. Between calls, `NativeCallable.listener` wakes the owner isolate to drain requests. Requests keep their inputs alive until completion, and no queue or route lock is held while invoking Dart. Dispatch uses active endpoint identity and the Dart VM's isolate-ownership check rather than assuming an isolate always runs on the same OS thread. Callbacks made directly on the owning isolate outside a dispatched call execute inline.
+While a Dart call waits for native work, it pumps its own queue. Between calls, the companion wakes the owner isolate by posting to its port, and the isolate drains requests. Requests keep their inputs alive until completion, and no queue or route lock is held while invoking Dart. Dispatch uses active endpoint identity and the Dart VM's isolate-ownership check rather than assuming an isolate always runs on the same OS thread. Callbacks made directly on the owning isolate outside a dispatched call execute inline.
 
 If lowering a later argument fails before a native call starts, generated wrappers roll back callback registrations from that call. Once the native call starts, Rust owns those handles and releases them through its callback free path.
 
@@ -65,9 +65,9 @@ while (!closeCallbackDispatcher()) {
 }
 ```
 
-In an application, use a timeout or an explicit native shutdown acknowledgement rather than retrying indefinitely. `false` means a callback handle, native call, queued request or listener notification remains. A successful close removes the native endpoint, releases its copied vtables and closes the Dart listener. Close is idempotent. Do not call the bindings after successful close.
+In an application, use a timeout or an explicit native shutdown acknowledgement rather than retrying indefinitely. `false` means a callback handle, native call, queued request or wake-up message remains. A successful close removes the native endpoint, releases its copied vtables and closes the port. Close is idempotent. Do not call the bindings after successful close.
 
-The listener keeps its isolate alive only while native callback routes exist. Calls that retain no callbacks allow a CLI to exit naturally; explicit close still releases the endpoint promptly. Forced isolate termination, abandoned workers and cancellation are not supported; killing an isolate while Rust retains its callbacks can still invalidate native callback pointers. Supporting async callbacks requires a separate invocation path that yields to Dart's event loop, not a synchronous queue pump.
+The port keeps its isolate alive only while native callback routes exist. Calls that retain no callbacks allow a CLI to exit naturally; explicit close still releases the endpoint promptly. Forced isolate termination, abandoned workers and cancellation are not supported. If the isolate has exited, posting to its port fails, so queued and later calls fail with an unexpected error instead of waiting. Supporting async callbacks requires a separate invocation path that yields to Dart's event loop, not a synchronous queue pump.
 
 ## Reproduce
 
@@ -84,4 +84,4 @@ The earlier handwritten relay and historical reports are retained in git history
 
 Local validation uses Linux x64, Dart 3.13.0, Rust 1.85.1 and UniFFI 0.31.2. Fresh device runs are needed; results previously reported for the handwritten prototype do not validate this generated bridge.
 
-Primary Dart API references: [Native.addressOf](https://api.dart.dev/dart-ffi/Native/addressOf.html) and [NativeCallable.listener](https://api.dart.dev/dart-ffi/NativeCallable/NativeCallable.listener.html).
+Primary Dart API references: [Native.addressOf](https://api.dart.dev/dart-ffi/Native/addressOf.html) and [RawReceivePort](https://api.dart.dev/dart-isolate/RawReceivePort-class.html).

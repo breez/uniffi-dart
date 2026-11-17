@@ -27,6 +27,9 @@ pub struct TestConfig {
     pub no_delete: bool,
     /// Delay in seconds after test failure (0 = no delay; None = default)
     pub failure_delay_secs: Option<u64>,
+    /// Leave out the generated callback relay library, to test the bindings
+    /// without it. By default it's built and bundled when one is generated.
+    pub skip_companion: bool,
 }
 
 impl TestConfig {
@@ -64,6 +67,11 @@ impl TestConfig {
 
     pub fn with_failure_delay(mut self, delay_secs: u64) -> Self {
         self.failure_delay_secs = Some(delay_secs);
+        self
+    }
+
+    pub fn without_companion(mut self) -> Self {
+        self.skip_companion = true;
         self
     }
 }
@@ -208,6 +216,28 @@ dependencies:
     let cdylib_path = test_helper.cdylib_path()?;
     let cdylib_filename = cdylib_path.file_name().unwrap();
 
+    gen::generate_dart_bindings(
+        &udl_path,
+        config_path.as_deref(),
+        Some(&out_dir),
+        &test_helper.cdylib_path()?,
+        false, // library_mode
+    )?;
+
+    // Build the generated callback relay library, if there is one, and bundle
+    // it next to the original library.
+    let companion_dir = out_dir.join("uniffi_dispatch");
+    let companion = if companion_dir.join("Cargo.toml").exists() && !test_config.skip_companion {
+        Some(build_companion(&project_root, &companion_dir, &out_dir, &cdylib_path)?)
+    } else {
+        None
+    };
+    let companion_state = match (&companion, companion_dir.exists()) {
+        (Some(_), _) => "bundled",
+        (None, true) => "absent",
+        (None, false) => "none",
+    };
+
     // Get the asset ID (should match what's in generated Dart code)
     // Format: "uniffi:{cdylib_name}" (without package prefix - that's added by Dart automatically)
     let cdylib_stem = cdylib_path.file_stem().unwrap().trim_start_matches("lib"); // Remove "lib" prefix on Unix
@@ -241,21 +271,30 @@ void main(List<String> args) async {{
 
     // Verify the asset ID matches what's in generated code
     print('Registered asset: ${{_makeAssetId(input.packageName)}}');
-  }});
+{}  }});
 }}
 "#,
-            cdylib_stem, cdylib_filename, cdylib_stem
+            cdylib_stem,
+            cdylib_filename,
+            cdylib_stem,
+            companion
+                .as_ref()
+                .map(|file| format!(
+                    "    output.assets.code.add(
+      CodeAsset(
+        package: input.packageName,
+        name: 'uniffi:{cdylib_stem}_dispatch',
+        linkMode: DynamicLoadingBundled(),
+        file: input.packageRoot.resolve('{file}'),
+      ),
+    );
+"
+                ))
+                .unwrap_or_default()
         )
         .as_bytes(),
     )?;
     build_hook.flush()?;
-    gen::generate_dart_bindings(
-        &udl_path,
-        config_path.as_deref(),
-        Some(&out_dir),
-        &test_helper.cdylib_path()?,
-        false, // library_mode
-    )?;
 
     // Copy fixture test files to output directory
     let test_glob_pattern = "test/*.dart";
@@ -277,9 +316,10 @@ void main(List<String> args) async {{
         }
     }
 
-    // Run tests
+    // Run tests. UNIFFI_DART_COMPANION says whether the relay library is
+    // bundled, left out, or not generated at all.
     let mut command = Command::new("dart");
-    command.current_dir(&out_dir).arg("test");
+    command.current_dir(&out_dir).arg("test").env("UNIFFI_DART_COMPANION", companion_state);
     let status = command.spawn()?.wait()?;
     if !status.success() {
         println!("FAILED");
@@ -294,6 +334,41 @@ void main(List<String> args) async {{
         bail!("running `dart` to run test script failed ({:?})", command);
     }
     Ok(())
+}
+
+/// Builds the generated callback relay crate and copies its library into
+/// `out_dir`, returning the copied file name.
+fn build_companion(
+    project_root: &Utf8Path,
+    companion_dir: &Utf8Path,
+    out_dir: &Utf8Path,
+    cdylib_path: &Utf8Path,
+) -> Result<String> {
+    let manifest = companion_dir.join("Cargo.toml");
+    let name = std::fs::read_to_string(&manifest)?
+        .lines()
+        .find_map(|line| line.strip_prefix("name = \"")?.strip_suffix('"').map(str::to_owned))
+        .ok_or_else(|| anyhow::anyhow!("no crate name in {manifest}"))?;
+    // Shared across fixtures, so the standard library is built only once.
+    let target_dir = project_root.join("target").join("uniffi-dart-companions");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(cargo)
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .status()?;
+    if !status.success() {
+        bail!("building the callback relay crate {manifest} failed");
+    }
+    // Same platform prefix and extension as the original library.
+    let original = cdylib_path.file_name().unwrap_or_default();
+    let prefix = if original.starts_with("lib") { "lib" } else { "" };
+    let extension = cdylib_path.extension().unwrap_or_default();
+    let file = format!("{prefix}{name}.{extension}");
+    copy(target_dir.join("debug").join(&file), out_dir.join(&file))?;
+    Ok(file)
 }
 
 /// Locate the workspace root:

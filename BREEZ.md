@@ -28,9 +28,10 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | `savage-fix-enum-field-error-names` | Ours. Superseded by #196, not to be PR'd | Nothing of it is left: its code change is identical to #196's, and its fixture was removed (`df4ea33`), so the fork carries #196 as it stands | Nothing to converge. |
 | #190 fixed-width handles | Open, chavic | **No: partial.** Only the Rust-future part (`Uint64` future handles). Its object-handle parts don't apply, since 0.29 passes objects as pointers | Take #190 unchanged once the port goes. |
 | #188 u64 as `BigInt` | Open draft, chavic | Yes, at its head `f0b7a21`. The merge moves #183's tests to `BigInt` | Upstream merge. |
-| #186 opt-in callback dispatch | Merged upstream | Yes (in the base) | Already upstream. |
+| #186 opt-in callback dispatch | Merged upstream | Yes (in the base), as changed by `savage-callback-relay`: its runtime is shared with the relay, and it wakes the isolate through a port | Already upstream; the changes go up with the relay PR. |
 | `savage-async-callback-listeners-on-0.29` | Ours, superseded, not to be PR'd | Its `callback_listeners` flag is removed by the always-on merge | Nothing left in the tree. |
 | `savage-callback-listeners-always-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-listeners-always`) | Yes. Async methods and frees only: sync callbacks wait for the relay PR | Upstream PR. |
+| `savage-callback-relay-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-relay`, stacked on the listeners PR) | Yes, plus dropping `uniffi_clone`, which 0.29 doesn't have | Upstream PR. |
 | `BREEZ.md` | Fork-only | n/a | Goes with the fork. |
 
 ## Merged
@@ -48,6 +49,7 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | `savage-callback-listeners-always-on-0.29` | port | Ours, from `savage-callback-listeners-always` (upstream main, upstreamable, draft in its `PR-DRAFT.md`). Listener delivery always on, replacing the `callback_listeners` flag. Adds `uniffiCallbackBarrier()`, drops the async cancel hook, and gives handles a random per-isolate prefix for hot restart. See `docs/callback-threads.md`. The merge moves #183's handle-count tests and #178's status test to await the barrier. A later merge narrows it to async methods and frees, so sync void methods run inline again, and #178's test is back to its original form. |
 | `upstream-pr-196` | upstream main | #196: name types with `Error` inside their name by their declared Dart name, in enum variant fields and in `Optional`/`Sequence` helpers. Supersedes `savage-fix-enum-field-error-names`, whose identical code change it replaces. |
 | `savage-fix-enum-field-error-names` (again) | upstream main | Drops that branch's `enum-error-named-fields` fixture, so the fork carries #196 exactly. |
+| `savage-callback-relay-on-0.29` | port | Ours, from `savage-callback-relay` (upstream main, upstreamable). Generates #186's companion as a callback relay for every component with callbacks. Bundled as the `<asset>_dispatch` native asset, it lets Rust call every callback from any thread: inline on the isolate's thread, queued from others, failing instead of crashing for an exited isolate. Without it, a warning names the sync callbacks that would abort. See `docs/callback-threads.md`. The SDK's Flutter package must build and bundle `uniffi_dispatch/`. |
 
 ## Not taken
 
@@ -55,5 +57,6 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
   on enums, which UniFFI 0.30 introduced. Its #183 commits are in via #183.
 - #193 (u64 as `int` with the full bit pattern): #188 (BigInt) was chosen instead.
 - #192 (enum return in sync callbacks): overlaps #181.
-- #186 (opt-in sync callback dispatch): in upstream main, but not enabled.
-  It rejects async and 32-bit targets.
+- #186's `callback_dispatch` option (worker threads for every Rust call): in the
+  base but not enabled. It rejects async and 32-bit targets. The relay above
+  reuses its companion without the worker threads.

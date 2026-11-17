@@ -68,6 +68,7 @@ members = [
     "fixtures/callback-thread-relay",
     "fixtures/callback-ffi-types",
     "fixtures/callback-threads",
+    "fixtures/callback-relay",
     "fixtures/benchmarks",
     "fixtures/custom_types",
     "fixtures/enum_field_type_names",
