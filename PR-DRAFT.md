@@ -1,4 +1,6 @@
-<!-- Draft PR description. Not for merging: remove this file before opening the PR. -->
+<!-- Draft PR description. Not for merging: remove this file before opening the PR.
+     If #188 merges first: rebase onto main and fold in the fix commit (0ff09b0) from
+     `savage-custom-type-config-u64` (see "Relation to #188"). -->
 
 # Map custom types to Dart types through configuration
 
@@ -57,6 +59,23 @@ final arm instead: the custom type's own converter, written to the slot for its
 FFI type. That works for configured and unconfigured types alike. I've run
 both together on a fork, with that arm, and #181's `callback-ffi-types` fixture
 still passes, as do this fixture's custom-scalar callback returns.
+
+### Relation to #188
+
+#188 (u64 as `BigInt`) has the same recursion, and doesn't compile with this
+PR for the same reason, even for the `u128` callbacks here. Its int-or-`BigInt`
+input for u64 also reaches through a custom type to its builtin. A custom type
+configured over a `u64` would get an `Object` parameter, be converted as a u64
+before its own converter sees it, and get its default passed to `lift` as
+#188's const placeholder instead of a `BigInt`. None of that compiles either.
+
+If #188 lands first, this PR takes the fix. #188's u64 helpers stop at a
+configured custom type and leave it to its own converter, while unconfigured
+u64 aliases keep the int-or-`BigInt` input. Callback results take the final arm
+described above. A configured u64 default reaches `lift` as a `BigInt`. The
+fixture gains a u64-backed `Stamp` configured as `DateTime`, used as an argument,
+a return, a record field and a foreign-trait result, sync and async, plus the
+custom-scalar callback returns that #162 kept out.
 
 ### Testing
 
