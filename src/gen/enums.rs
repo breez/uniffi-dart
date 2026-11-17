@@ -135,9 +135,9 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
                 DartCodeOracle::var_name(field.name())
             }
         }
-        // Both names already go through `DartCodeOracle::class_name`, which renames
-        // only a trailing `Error`. Replacing `Error` anywhere broke field types such
-        // as `LnurlErrorDetails`.
+        // The field's code type already names its type the way that type's
+        // declaration does (`DartCodeOracle::class_name` renames a trailing `Error`
+        // only), so it is used unchanged.
         fn field_type(field: &Field, type_helper: &dyn TypeHelperRenderer) -> String {
             field
                 .as_type()
