@@ -215,25 +215,18 @@ fn generate_callback_methods_definitions(
         })
         .collect::<Vec<_>>();
 
+    // A result is declared in its stored form (BigInt for u64), not the
+    // int-or-BigInt input form, so implementers keep static type checking.
+    // Lowering still range-checks the value before it reaches Rust.
     let ret_type = if method.is_async() {
         if let Some(ret) = method.return_type() {
             let rendered = ret.as_renderable().render_type(ret, type_helper);
-            let rendered = if super::unsigned::accepts_u64(ret) {
-                super::unsigned::input_type(ret)
-            } else {
-                rendered
-            };
             quote!(Future<$rendered>)
         } else {
             quote!(Future<void>)
         }
     } else if let Some(ret) = method.return_type() {
-        let rendered = ret.as_renderable().render_type(ret, type_helper);
-        if super::unsigned::accepts_u64(ret) {
-            super::unsigned::input_type(ret)
-        } else {
-            rendered
-        }
+        ret.as_renderable().render_type(ret, type_helper)
     } else {
         quote!(void)
     };

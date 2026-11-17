@@ -19,7 +19,7 @@ class DartTestCallbackInterface implements TestCallbackInterface {
   }
 
   @override
-  int runTest(TestCase testCase, BigInt countValue) {
+  BigInt runTest(TestCase testCase, BigInt countValue) {
     final count = countValue.toIntChecked();
     final stopwatch = Stopwatch()..start();
 
@@ -50,7 +50,8 @@ class DartTestCallbackInterface implements TestCallbackInterface {
     }
 
     stopwatch.stop();
-    return stopwatch.elapsedMicroseconds * 1000; // Convert to nanoseconds
+    // Convert to nanoseconds
+    return BigInt.from(stopwatch.elapsedMicroseconds * 1000);
   }
 }
 
@@ -102,13 +103,13 @@ void main() {
 
       // Run small performance tests
       final functionTime = callback.runTest(TestCase.function, BigInt.from(10));
-      expect(functionTime, greaterThan(0));
+      expect(functionTime, greaterThan(BigInt.zero));
 
       final voidTime = callback.runTest(TestCase.voidReturn, BigInt.from(10));
-      expect(voidTime, greaterThan(0));
+      expect(voidTime, greaterThan(BigInt.zero));
 
       final noArgsTime = callback.runTest(TestCase.noArgsVoidReturn, BigInt.from(10));
-      expect(noArgsTime, greaterThan(0));
+      expect(noArgsTime, greaterThan(BigInt.zero));
     });
 
     test('full benchmark suite', () {
