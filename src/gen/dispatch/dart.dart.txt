@@ -1,11 +1,9 @@
 const _uniffiDispatchAsset = '@ASSET@';
-@Native<
-  Uint64 Function(Pointer<NativeFunction<Void Function()>>, Pointer<Void>)
->(assetId: _uniffiDispatchAsset, symbol: 'uniffi_dispatch_create')
-external int _uniffiDispatchCreate(
-  Pointer<NativeFunction<Void Function()>> wake,
-  Pointer<Void> api,
-);
+@Native<Uint64 Function(Int64, Pointer<Void>)>(
+  assetId: _uniffiDispatchAsset,
+  symbol: 'uniffi_dispatch_create',
+)
+external int _uniffiDispatchCreate(int port, Pointer<Void> api);
 @Native<Void Function(Uint64)>(
   assetId: _uniffiDispatchAsset,
   symbol: 'uniffi_dispatch_drain',
@@ -56,7 +54,7 @@ class _UniffiDispatch {
   }
 
   void onLowered(void Function() undo) {
-    _listener.keepIsolateAlive = true;
+    _port.keepIsolateAlive = true;
     if (_pending.isNotEmpty) _pending.last.add(undo);
   }
 
@@ -64,10 +62,13 @@ class _UniffiDispatch {
     if (_pending.isNotEmpty) _pending.last.clear();
   }
 
-  late final NativeCallable<Void Function()> _listener;
+  // The companion wakes this isolate by posting to the port. Posting to a
+  // closed port fails instead of aborting, so the companion notices when the
+  // isolate has exited.
+  late final RawReceivePort _port;
   late final int _id;
   void _refreshKeepAlive() {
-    if (!_closed) _listener.keepIsolateAlive = _uniffiDispatchHasRoutes(_id);
+    if (!_closed) _port.keepIsolateAlive = _uniffiDispatchHasRoutes(_id);
   }
 
   bool _closed = false;
@@ -83,21 +84,21 @@ class _UniffiDispatch {
         'uniffi_dispatch companion crate generated with these bindings.',
       );
     }
-    _listener = NativeCallable<Void Function()>.listener(() {
+    _port = RawReceivePort((_) {
       _uniffiDispatchDrain(_id);
       _refreshKeepAlive();
-    });
+    }, 'uniffi callback dispatch');
     _id = _uniffiDispatchCreate(
-      _listener.nativeFunction,
+      _port.sendPort.nativePort,
       NativeApi.initializeApiDLData,
     );
     if (_id == 0) {
-      _listener.close();
+      _port.close();
       throw UnsupportedError(
         'Dart VM does not provide isolate ownership checks',
       );
     }
-    _listener.keepIsolateAlive = false;
+    _port.keepIsolateAlive = false;
   }
   int get id {
     if (_closed) throw StateError('Callback dispatcher is closed');
@@ -109,7 +110,7 @@ class _UniffiDispatch {
     if (_pending.isNotEmpty) return false;
     if (!_uniffiDispatchClose(_id)) return false;
     _closed = true;
-    _listener.close();
+    _port.close();
     return true;
   }
 }
