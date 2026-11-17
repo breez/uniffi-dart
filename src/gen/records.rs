@@ -72,8 +72,12 @@ pub fn generate_record(obj: &Record, type_helper: &dyn TypeHelperRenderer) -> da
                 initializers.push(quote!($(&name) = $(&name) ?? $default));
                 return quote!($(generate_type(&field.as_type()))? $(&name));
             }
-            let (formal, initializer) =
-                super::unsigned::constructor_field(&field.as_type(), &name, quote!(this.$(&name)));
+            let (formal, initializer) = super::unsigned::constructor_field(
+                &field.as_type(),
+                &name,
+                quote!(this.$(&name)),
+                type_helper,
+            );
             initializers.extend(initializer);
             if let Some(default_value) = field.default_value() {
                 if let Some(default_expr) = render_default_value(default_value, &field.as_type()) {

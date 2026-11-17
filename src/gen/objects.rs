@@ -163,6 +163,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             false,
             if constructor.is_async() { None } else { Some(quote!($call_status)) },
             Some(&lowered),
+            type_helper,
         );
 
         // Ensure argument types are included
@@ -448,6 +449,7 @@ fn generate_callback_trait_rust_method(
         true,
         if method.is_async() { None } else { Some(quote!($call_status)) },
         Some(&lowered),
+        type_helper,
     );
 
     if method.is_async() {
@@ -530,6 +532,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         true,
         if func.is_async() { None } else { Some(quote!($call_status)) },
         Some(&lowered),
+        type_helper,
     );
 
     if func.is_async() {
@@ -664,7 +667,7 @@ fn trait_method_call(
     let mut lowered_args = Vec::new();
     for (arg, expr) in method.arguments().into_iter().zip(arg_exprs.iter()) {
         type_helper.include_once_check(&arg.as_codetype().canonical_name(), &arg.as_type());
-        lowered_args.push(DartCodeOracle::type_lower_fn(&arg.as_type(), expr.clone()));
+        lowered_args.push(DartCodeOracle::type_lower_fn(&arg.as_type(), expr.clone(), type_helper));
     }
 
     let call = DartCodeOracle::scoped_ffi_call(
@@ -673,6 +676,7 @@ fn trait_method_call(
         true,
         Some(quote!(status)),
         Some(&lowered_args),
+        type_helper,
     );
 
     if let Some(ret) = method.return_type() {

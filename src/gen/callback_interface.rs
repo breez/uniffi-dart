@@ -393,7 +393,7 @@ pub fn generate_callback_functions(
             // and the future still completes with an error.
             let success_return = if let Some(ret) = m.return_type() {
                 let converter = ret.as_codetype().ffi_converter_name();
-                let value = super::unsigned::normalize_for_lower(ret, quote!(result));
+                let value = super::unsigned::normalize_for_lower(ret, quote!(result), type_helper);
                 quote!(resultStruct.returnValue = $(&converter).lower($value);)
             } else {
                 quote!()
@@ -473,7 +473,13 @@ pub fn generate_callback_functions(
             let call_status = &DartCodeOracle::call_status_name(&m.arguments());
             // Handle return value using the oracle
             let call_dart_method = if let Some(ret) = m.return_type() {
-                DartCodeOracle::callback_return_handling(ret, method_name, arg_names, call_status)
+                DartCodeOracle::callback_return_handling(
+                    ret,
+                    method_name,
+                    arg_names,
+                    call_status,
+                    type_helper,
+                )
             } else {
                 // Handle void return types
                 DartCodeOracle::callback_void_handling(method_name, arg_names, call_status)

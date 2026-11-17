@@ -47,6 +47,7 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         false,
         if func.is_async() { None } else { Some(quote!($call_status)) },
         Some(&lowered),
+        type_helper,
     );
 
     // Use centralized callback-aware argument lowering
