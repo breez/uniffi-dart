@@ -14,6 +14,10 @@ pub trait TypeHelperRenderer {
     fn callback_dispatch(&self) -> bool {
         false
     }
+    /// The `custom_types` configuration for the custom type `name`, if any.
+    fn custom_type_config(&self, _name: &str) -> Option<&super::custom::CustomTypeConfig> {
+        None
+    }
     fn get_ci(&self) -> &ComponentInterface;
     fn include_once_check(&self, name: &str, ty: &Type) -> bool;
     fn check(&self, name: &str) -> bool;

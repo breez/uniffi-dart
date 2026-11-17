@@ -2,7 +2,7 @@ use genco::prelude::*;
 use uniffi_bindgen::interface::{AsType, Record, Type};
 use uniffi_bindgen::pipeline::general::nodes::Literal as PipelineLiteral;
 
-use super::defaults::render_default_value;
+use super::defaults::{configured_custom_default, render_default_value};
 use super::oracle::{AsCodeType, DartCodeOracle};
 use super::render::{Renderable, TypeHelperRenderer};
 use super::types::generate_type;
@@ -51,12 +51,25 @@ impl Renderable for RecordCodeType {
 pub fn generate_record(obj: &Record, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {
     let cls_name = &DartCodeOracle::class_name(obj.name());
     let ffi_conv_name = &obj.as_codetype().ffi_converter_name();
+    // Configured custom types with a default take a nullable parameter, and
+    // the initializer list applies the default (see `configured_custom_default`).
+    let custom_defaults: Vec<(String, String)> = obj
+        .fields()
+        .iter()
+        .filter_map(|field| {
+            let default =
+                configured_custom_default(field.default_value()?, &field.as_type(), type_helper)?;
+            Some((DartCodeOracle::var_name(field.name()), default))
+        })
+        .collect();
     let constructor_params: Vec<dart::Tokens> = obj
         .fields()
         .iter()
         .map(|field| {
             let name = DartCodeOracle::var_name(field.name());
-            if let Some(default_value) = field.default_value() {
+            if custom_defaults.iter().any(|(custom, _)| *custom == name) {
+                quote!($(generate_type(&field.as_type()))? $name)
+            } else if let Some(default_value) = field.default_value() {
                 if let Some(default_expr) = render_default_value(default_value, &field.as_type()) {
                     quote!(this.$name = $(default_expr))
                 } else {
@@ -71,10 +84,15 @@ pub fn generate_record(obj: &Record, type_helper: &dyn TypeHelperRenderer) -> da
         })
         .collect();
 
+    let initializers = if custom_defaults.is_empty() {
+        quote!()
+    } else {
+        quote!(: $(for (name, default) in &custom_defaults join (, ) => $name = $name ?? $default))
+    };
     let constructor = if obj.fields().is_empty() {
         quote!($(cls_name)();)
     } else {
-        quote!($(cls_name)({$(for param in constructor_params => $param, )});)
+        quote!($(cls_name)({$(for param in constructor_params => $param, )}) $initializers;)
     };
 
     for f in obj.fields() {
