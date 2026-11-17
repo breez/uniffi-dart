@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:ffi';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -89,6 +91,29 @@ void main() {
     expect(sink.logs.toSet(), {for (var i = 0; i < 8; i++) 'task $i'});
   });
 
+  test('a fire-and-forget call on the Dart thread runs after the call', () async {
+    final sink = Sink();
+    logHere(sink: sink, message: 'later');
+    // Delivered through the listener even on this thread, so not yet.
+    expect(sink.logs, isEmpty);
+    await uniffiCallbackBarrier();
+    expect(sink.logs, ['later']);
+  });
+
+  test('the barrier waits for calls queued from another thread, in order', () async {
+    final sink = Sink();
+    logInOrder(sink: sink, count: 200);
+    await uniffiCallbackBarrier();
+    expect(sink.logs, [for (var i = 0; i < 200; i++) '$i']);
+  });
+
+  test('the barrier waits for a free queued from a worker thread', () async {
+    final before = eventSinkHandlesForTest();
+    dropSinkOnThread(sink: Sink());
+    await uniffiCallbackBarrier();
+    expect(eventSinkHandlesForTest(), before);
+  });
+
   test('a callback interface dropped on a worker thread is freed', () async {
     final before = eventSinkHandlesForTest();
     dropSinkOnThread(sink: Sink());
@@ -135,6 +160,19 @@ void main() {
       storeRoundtripOnTokio(store: store, key: '', value: 'v'),
       throwsA(isA<EmptyKeyStoreException>()),
     );
+  });
+
+  test('handles from different isolates do not collide', () async {
+    // After a hot restart Rust may still hold the old isolate's handles. They
+    // must not match the new isolate's handles. Only the handle map is used in
+    // the other isolate: lowering a callback there would move the vtable to it.
+    final here = UniffiHandleMap<int>().insert(0);
+    final there = await Isolate.run(() => UniffiHandleMap<int>().insert(0));
+    expect(here & 1, 1);
+    expect(there & 1, 1);
+    if (sizeOf<IntPtr>() == 8) {
+      expect(here, isNot(there));
+    }
   });
 
   test('a sync method that returns a value runs on the Dart thread', () {

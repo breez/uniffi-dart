@@ -6,7 +6,9 @@ use uniffi_bindgen::interface::{AsType, Callable, Type};
 use uniffi_bindgen::ComponentInterface;
 
 use super::oracle::AsCodeType;
-use super::render::{AsRenderable, Renderable, Renderer, TypeHelperRenderer};
+use super::render::{
+    doc_comment, line_comment, AsRenderable, Renderable, Renderer, TypeHelperRenderer,
+};
 use super::{enums, functions, objects, primitives, records};
 use crate::gen::oracle::DartCodeOracle;
 
@@ -18,7 +20,6 @@ pub const RUNTIME_MODULE: &str = "uniffi_runtime";
 
 pub struct TypeHelpersRenderer<'a> {
     pub callback_dispatch: bool,
-    pub callback_listeners: bool,
     ci: &'a ComponentInterface,
     include_once_names: RefCell<BTreeMap<String, Type>>,
     // Tracks ad-hoc "include once" names that don't map to a concrete `Type`
@@ -29,7 +30,6 @@ impl<'a> TypeHelpersRenderer<'a> {
     pub fn new(ci: &'a ComponentInterface) -> Self {
         Self {
             callback_dispatch: false,
-            callback_listeners: false,
             ci,
             include_once_names: RefCell::new(BTreeMap::new()),
             include_once_custom: RefCell::new(BTreeSet::new()),
@@ -100,9 +100,6 @@ impl<'a> TypeHelpersRenderer<'a> {
 impl TypeHelperRenderer for TypeHelpersRenderer<'_> {
     fn callback_dispatch(&self) -> bool {
         self.callback_dispatch
-    }
-    fn callback_listeners(&self) -> bool {
-        self.callback_listeners
     }
     // Checks if the type imports for each type have already been added
     fn include_once_check(&self, name: &str, ty: &Type) -> bool {
@@ -265,6 +262,7 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
         import "dart:ffi";
         import "dart:io" show Platform, File, Directory;
         import "dart:isolate";
+        import "dart:math" show Random;
         import "dart:typed_data";
         import "package:ffi/ffi.dart";
 
@@ -603,23 +601,11 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
             typedef UniffiForeignFutureFree = Void Function(Uint64);
             typedef UniffiForeignFutureFreeDart = void Function(int);
 
-            class UniffiForeignFutureState {
-                bool cancelled = false;
-            }
-
-            final uniffiForeignFutureHandleMap = UniffiHandleMap<UniffiForeignFutureState>();
-
-            void _uniffiForeignFutureFree(int handle) {
-                final state = uniffiForeignFutureHandleMap.maybeRemove(handle);
-                if (state != null) {
-                    state.cancelled = true;
-                }
-            }
-
-            final Pointer<NativeFunction<UniffiForeignFutureFree>>
-                uniffiForeignFutureFreePointer =
-                    Pointer.fromFunction<UniffiForeignFutureFree>(_uniffiForeignFutureFree);
-
+            $(line_comment(&[
+                "Rust fills this out-parameter before calling an async callback",
+                "method. The bindings never write it: Dart futures can't be",
+                "cancelled, so a dropped Rust future just discards the result.",
+            ]))
             final class UniffiForeignFuture extends Struct {
                 @Uint64()
                 external int handle;
@@ -627,11 +613,50 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 external Pointer<NativeFunction<UniffiForeignFutureFree>> free;
             }
 
+            $(doc_comment(&[
+                "Completes once this isolate has run every callback that Rust queued to",
+                "it before this call.",
+                "",
+                "Async callback methods, methods that return nothing and can't throw,",
+                "and callback frees are delivered through `NativeCallable.listener`.",
+                "They run on a later event-loop turn, even when Rust makes the call on",
+                "this isolate's own thread, so their effects aren't visible as soon as",
+                "the Rust call returns. Await this to observe them, for example in",
+                "tests. For an async method it waits until the method has started, not",
+                "until its future completes.",
+            ]))
+            Future<void> uniffiCallbackBarrier() {
+                final done = Completer<void>();
+                late final NativeCallable<Void Function()> marker;
+                marker = NativeCallable<Void Function()>.listener(() {
+                    marker.close();
+                    done.complete();
+                });
+                $(line_comment(&[
+                    "The VM delivers an isolate's listener calls in the order they were",
+                    "made, so this runs after everything queued before it.",
+                ]))
+                marker.nativeFunction.asFunction<void Function()>()();
+                return done.future;
+            }
+
+            $(line_comment(&[
+                "Rust keeps a callback's vtable and handles for the life of the process,",
+                "but each isolate numbers its handles itself. After a Flutter hot",
+                "restart, Rust can still hold handles from the old isolate. A random",
+                "per-isolate prefix makes those miss in the new isolate's maps instead",
+                "of reaching (or freeing) its objects. Until callback handles are",
+                "lowered as Uint64, 32-bit targets carry them in a pointer, so they get",
+                "no prefix there.",
+            ]))
+            final int _uniffiHandlePrefix =
+                sizeOf<IntPtr>() == 8 ? (Random().nextInt(1 << 30) + 1) << 32 : 0;
+
             // As of uniffi 0.30, foreign handles must always have the lowest bit set
             // This is achieved here with an odd number sequence.
             class UniffiHandleMap<T> {
                 final Map<int, T> _map = {};
-                int _counter = 1;
+                int _counter = _uniffiHandlePrefix + 1;
 
                 int insert(T obj) {
                 final handle = _counter;

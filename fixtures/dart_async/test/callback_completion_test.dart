@@ -55,7 +55,8 @@ void main() {
         CALL_UNEXPECTED_ERROR,
       );
       expect(calls, 1);
-      expect(uniffiForeignFutureHandleMap.maybeRemove(out.ref.handle), isNull);
+      expect(out.ref.handle, 0);
+      expect(out.ref.free, nullptr);
     } finally {
       completion.close();
       calloc.free(out);
@@ -92,14 +93,13 @@ void main() {
     ),
   };
   for (final entry in cases.entries) {
-    test('${entry.key} completes exactly once and releases its future handle', () async {
+    test('${entry.key} completes exactly once', () async {
       final handle = FfiConverterCallbackInterfaceAsyncByteSource.lower(
         ByteSource(entry.value.$1),
       );
       final out = calloc<UniffiForeignFuture>();
       final done = Completer<int>();
       var completions = 0;
-      var handleReleased = false;
       final completion =
           NativeCallable<UniffiForeignFutureCompleteU8>.isolateLocal((
             int data,
@@ -108,16 +108,6 @@ void main() {
             completions++;
             final code = result.callStatus.code;
             if (code != CALL_SUCCESS) result.callStatus.errorBuf.free();
-            // The trampoline must release the handle before completing.
-            try {
-              uniffiForeignFutureHandleMap.get(out.ref.handle);
-            } catch (_) {
-              handleReleased = true;
-            }
-            // Rust may synchronously release the foreign future on completion.
-            out.ref.free.asFunction<UniffiForeignFutureFreeDart>()(
-              out.ref.handle,
-            );
             if (!done.isCompleted) done.complete(code);
           });
       try {
@@ -125,11 +115,8 @@ void main() {
         expect(await done.future.timeout(Duration(seconds: 5)), entry.value.$2);
         await Future<void>.delayed(Duration.zero);
         expect(completions, 1);
-        expect(handleReleased, isTrue);
-        expect(
-          uniffiForeignFutureHandleMap.maybeRemove(out.ref.handle),
-          isNull,
-        );
+        expect(out.ref.handle, 0);
+        expect(out.ref.free, nullptr);
       } finally {
         completion.close();
         calloc.free(out);
@@ -166,15 +153,24 @@ void main() {
     }
   });
 
+  // Rust pre-fills the out-parameter, and an async callback method may run
+  // after the Rust call has returned, so the bindings must never write it.
+  // With no cancel hook, the Dart work runs to completion even if Rust stops
+  // waiting, and Rust discards a late result.
   for (final fail in [false, true]) {
     test(
-      'cancelled future still completes ${fail ? "error" : "success"} exactly once',
+      'a late ${fail ? "error" : "success"} completes once and leaves Rust\'s out-parameter alone',
       () async {
         final pending = Completer<int>();
         final handle = FfiConverterCallbackInterfaceAsyncByteSource.lower(
           ByteSource(() => pending.future),
         );
         final out = calloc<UniffiForeignFuture>();
+        const sentinelHandle = 0x5eed;
+        final sentinelFree =
+            Pointer<NativeFunction<UniffiForeignFutureFree>>.fromAddress(0x1000);
+        out.ref.handle = sentinelHandle;
+        out.ref.free = sentinelFree;
         var completions = 0;
         int? completedCode;
         final completion =
@@ -195,24 +191,18 @@ void main() {
             0,
             out,
           );
-          final free = out.ref.free.asFunction<UniffiForeignFutureFreeDart>();
-          free(out.ref.handle);
-          free(out.ref.handle);
+          expect(completions, 0);
           if (fail) {
-            pending.completeError(StateError('cancelled'));
+            pending.completeError(StateError('late'));
           } else {
             pending.complete(42);
           }
           // Completing the Future schedules its continuation before this event.
           await Future<void>.delayed(Duration.zero);
-          // Rust keeps the completion slot until Dart completes, even after
-          // cancellation, so completing here releases it.
           expect(completions, 1);
           expect(completedCode, fail ? CALL_UNEXPECTED_ERROR : CALL_SUCCESS);
-          expect(
-            uniffiForeignFutureHandleMap.maybeRemove(out.ref.handle),
-            isNull,
-          );
+          expect(out.ref.handle, sentinelHandle);
+          expect(out.ref.free, sentinelFree);
         } finally {
           completion.close();
           calloc.free(out);

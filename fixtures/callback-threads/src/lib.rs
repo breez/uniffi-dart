@@ -113,6 +113,24 @@ pub fn log_from_tokio(sink: Box<dyn EventSink>, tasks: u32) {
     });
 }
 
+/// Calls `log` on the calling thread, which is the Dart thread here.
+#[uniffi::export]
+pub fn log_here(sink: Box<dyn EventSink>, message: String) {
+    sink.log(message);
+}
+
+/// Logs `count` numbered messages from one worker thread, in order, and joins it.
+#[uniffi::export]
+pub fn log_in_order(sink: Box<dyn EventSink>, count: u32) {
+    std::thread::spawn(move || {
+        for i in 0..count {
+            sink.log(format!("{i}"));
+        }
+    })
+    .join()
+    .expect("worker thread");
+}
+
 /// Drops the callback object, which calls `uniffi_free`, on a worker thread.
 #[uniffi::export]
 pub fn drop_sink_on_thread(sink: Box<dyn EventSink>) {

@@ -125,6 +125,16 @@ The active `time-types` fixture covers timestamps in functions, objects,
 callbacks, async results, records, optionals, lists and maps, as well as range
 checks and precision boundaries.
 
+## Callbacks and threads
+
+Rust may call async callback methods, callback methods that return nothing and
+can't throw, and callback frees from any thread. The bindings deliver them
+through `NativeCallable.listener`, so they run on a later turn of the owning
+isolate's event loop. Await `uniffiCallbackBarrier()` to observe their effects.
+Synchronous callback methods that return a value or can throw still run only on
+the owning isolate's thread. See [docs/callback-threads.md](docs/callback-threads.md)
+for ordering, isolate ownership and hot restart.
+
 ## Versioning
 
 uniffi-dart is versioned independently from uniffi-rs. We follow the
