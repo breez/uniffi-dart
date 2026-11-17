@@ -9,6 +9,9 @@ class _Sink implements EventSink {
 
   @override
   void log(String message) {}
+
+  @override
+  int logCount() => 0;
 }
 
 Future<void> main() async {

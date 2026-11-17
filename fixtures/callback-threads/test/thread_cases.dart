@@ -26,6 +26,9 @@ class Sink implements EventSink {
 
   @override
   void log(String message) => logs.add(message);
+
+  @override
+  int logCount() => logs.length;
 }
 
 class MemoryStore implements Store {
@@ -98,6 +101,15 @@ void main() {
     expect(sink.logs, isEmpty);
     await uniffiCallbackBarrier();
     expect(sink.logs, ['later']);
+  });
+
+  test('a value method can run before an earlier fire-and-forget call', () async {
+    final sink = Sink();
+    // Rust calls log and then logCount on this thread. log is queued, while
+    // logCount returns a value and runs inline, so it sees no logs yet.
+    expect(logThenCount(sink: sink, message: 'first'), 0);
+    await uniffiCallbackBarrier();
+    expect(sink.logs, ['first']);
   });
 
   test('the barrier waits for calls queued from another thread, in order', () async {
