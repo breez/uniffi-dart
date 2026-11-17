@@ -4,7 +4,7 @@ use uniffi_bindgen::interface::ffi::{FfiStruct, FfiType};
 use uniffi_bindgen::interface::{AsType, Method, Type};
 
 use crate::gen::oracle::{AsCodeType, DartCodeOracle};
-use crate::gen::render::{AsRenderable, Renderable, TypeHelperRenderer};
+use crate::gen::render::{line_comment, AsRenderable, Renderable, TypeHelperRenderer};
 use crate::gen::CodeType;
 
 #[derive(Debug)]
@@ -329,7 +329,9 @@ pub fn generate_callback_functions(
     type_helper: &dyn TypeHelperRenderer,
 ) -> dart::Tokens {
     let cls_name = &DartCodeOracle::class_name(callback_name);
-    let listeners = type_helper.callback_listeners();
+    // `callback_dispatch` relays every synchronous callback through its
+    // companion and rejects async ones, so it keeps `Pointer.fromFunction`.
+    let listeners = !type_helper.callback_dispatch();
 
     let functions: Vec<dart::Tokens> = methods.iter().enumerate().map(|(index, m)| {
         let method_name = &DartCodeOracle::fn_name(m.name()).to_string();
@@ -407,12 +409,13 @@ pub fn generate_callback_functions(
             );
 
             quote! {
-                $(if listeners => $(line_comment(&[
+                $(line_comment(&[
                     "Runs as a NativeCallable.listener, on this isolate's event loop after",
                     "Rust's call has returned. It must not write `outReturn`, which points",
-                    "into Rust's stack frame. Rust pre-fills it with a no-op dropped",
-                    "callback, and drops a completion sent after it stopped waiting.",
-                ])))
+                    "into Rust's stack frame. Rust pre-fills it with a no-op free callback.",
+                    "The Dart work always runs to completion. If Rust has stopped waiting,",
+                    "it discards the result.",
+                ]))
                 void $callback_method_name(
                     int uniffiHandle,
                     $(for param in &param_types => $param,)
@@ -422,12 +425,6 @@ pub fn generate_callback_functions(
                 ) {
                     try {
                     final callback = uniffiFutureCallback.asFunction<$(&completion_dart)>();
-                    $(if !listeners {
-                        final state = UniffiForeignFutureState();
-                        final handle = uniffiForeignFutureHandleMap.insert(state);
-                        outReturn.ref.handle = handle;
-                        outReturn.ref.free = uniffiForeignFutureFreePointer;
-                    })
 
                     () async {
                         var completed = false;
@@ -448,7 +445,6 @@ pub fn generate_callback_functions(
                                 // Conversion can throw. Claim completion only once the
                                 // result/status is ready to transfer to Rust.
                                 completed = true;
-                                $(if !listeners => uniffiForeignFutureHandleMap.maybeRemove(handle);)
                                 callback(uniffiCallbackData, resultStruct);
                             }
                         } catch (e) {
@@ -461,21 +457,16 @@ pub fn generate_callback_functions(
                                 // Conversion can throw. Claim completion only once the
                                 // result/status is ready to transfer to Rust.
                                 completed = true;
-                                $(if !listeners => uniffiForeignFutureHandleMap.maybeRemove(handle);)
                                 callback(uniffiCallbackData, resultStruct);
                             }
-                        } $(if !listeners {
-                            finally {
-                                uniffiForeignFutureHandleMap.maybeRemove(handle);
-                            }
-                        })
+                        }
                     }();
                     } finally {
                         $free_buffers
                     }
                 }
 
-                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, listeners))
+                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, true))
             }
         } else if listeners && m.return_type().is_none() && m.throws_type().is_none() {
             quote! {
@@ -549,17 +540,6 @@ pub fn generate_callback_functions(
 
         $(callback_registration(free_callback_fn, free_callback_pointer, free_callback_type, listeners))
     }
-}
-
-/// Emits `//` comment lines into the generated Dart.
-fn line_comment(lines: &[&str]) -> dart::Tokens {
-    let mut tokens = dart::Tokens::new();
-    for line in lines {
-        tokens.push();
-        tokens.append(format!("// {line}"));
-    }
-    tokens.push();
-    tokens
 }
 
 /// Exposes a generated callback function as a native function pointer.

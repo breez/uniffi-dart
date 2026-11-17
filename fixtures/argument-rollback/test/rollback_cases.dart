@@ -32,7 +32,7 @@ class Pure implements PureConsumer {
 }
 
 void main() {
-  test('pure callback handles are owned despite their scalar wire type', () {
+  test('pure callback handles are owned despite their scalar wire type', () async {
     final before = pureCallbackHandlesForTest();
     final callback = Pure();
     for (var i = 0; i < 20; i++) {
@@ -44,6 +44,8 @@ void main() {
     expect(pureCallbackHandlesForTest(), before);
     expect(callback.calls, 0);
     expect(takePureCallback(consumer: callback, small: 7), 7);
+    // ping and the free both return nothing, so they run after the call.
+    await uniffiCallbackBarrier();
     expect(callback.calls, 1);
     expect(pureCallbackHandlesForTest(), before);
   });
@@ -377,7 +379,7 @@ void main() {
     });
   }
 
-  test('failed callback arguments remove their Dart handle entries', () {
+  test('failed callback arguments remove their Dart handle entries', () async {
     final before = callbackHandlesForTest();
     for (var i = 0; i < 20; i++) {
       expect(
@@ -387,6 +389,8 @@ void main() {
     }
     expect(callbackHandlesForTest(), before);
     expect(takeCallback(consumer: ReentrantConsumer(), small: 1), BigInt.from(3));
+    // Rust frees the consumer through a listener, after the call.
+    await uniffiCallbackBarrier();
     expect(callbackHandlesForTest(), before);
   });
   test('an error status still transfers arguments to Rust', () async {

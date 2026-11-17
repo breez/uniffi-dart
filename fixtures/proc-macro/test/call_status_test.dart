@@ -55,10 +55,15 @@ void main() {
     expect(object.addStatus(status: 3), 53);
   });
 
-  test('Dart callbacks preserve status arguments', () {
+  test('Dart callbacks preserve status arguments', () async {
     final callback = DartStatusTrait();
-    expect(callForeignStatus(callback: callback, status: 80), 82);
+    // Rust calls setStatus and then addStatus. setStatus returns nothing, so
+    // it is delivered after the Rust call, while addStatus runs inline and
+    // still sees the old value.
+    expect(callForeignStatus(callback: callback, status: 80), 2);
+    await uniffiCallbackBarrier();
     expect(callback.value, 80);
+    expect(callForeignStatus(callback: callback, status: 80), 82);
     expect(describeForeignStatus(callback: callback, status: 0), 'status: 0');
     expect(
       () => describeForeignStatus(callback: callback, status: 7),

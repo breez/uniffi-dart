@@ -20,7 +20,8 @@ Started from upstream main at `ab977ca`.
 | `savage-fix-enum-field-error-names` | upstream main | Ours, upstreamable. Enum variant fields keep `Error` mid-name in type names (`LnurlErrorDetails`). |
 | `savage-pr-190-on-0.29` | port | Rust-future part of #190: future handles are `Uint64`, fixing the 32-bit ARM ABI. Its object-handle parts don't apply on 0.29. |
 | `savage-pr-188-on-0.29` | port | #188 (draft upstream): u64 as `BigInt`, with `int` or `BigInt` accepted as input. Applies to the port unchanged. The merge resolves conflicts with #178 and #181 and moves #183's tests to `BigInt`. |
-| `savage-async-callback-listeners-on-0.29` | port | Ours, from `savage-async-callback-listeners` (upstream main, upstreamable). Opt-in `callback_listeners = true`: async methods, fire-and-forget sync methods and `uniffi_free` become `NativeCallable.listener`s that any thread may call (#161). |
+| `savage-async-callback-listeners-on-0.29` | port | Superseded by the next row. Opt-in `callback_listeners = true`: async methods, fire-and-forget sync methods and `uniffi_free` become `NativeCallable.listener`s that any thread may call (#161). |
+| `savage-callback-listeners-always-on-0.29` | port | Ours, from `savage-callback-listeners-always` (upstream main, upstreamable, draft in its `PR-DRAFT.md`). The same listener delivery, always on, replacing the `callback_listeners` flag. Adds `uniffiCallbackBarrier()`, drops the async cancel hook, and gives handles a random per-isolate prefix for hot restart. See `docs/callback-threads.md`. The merge moves #183's handle-count tests and #178's status test to await the barrier. |
 
 ## Not taken
 

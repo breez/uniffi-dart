@@ -102,10 +102,12 @@ void main() {
       defaultObject.dispose();
     });
 
-    test('callback interfaces', () {
+    test('callback interfaces', () async {
       final callback = DartTestCallback();
 
       callbackDoNothing(callback: callback);
+      // `doNothing` returns nothing, so it runs after the Rust call returns.
+      await uniffiCallbackBarrier();
       expect(callback.didNothing, isTrue);
       expect(callbackAdd(callback: callback, a: 2, b: 3), 5);
       expect(callbackOptional(callback: callback, value: null), -1);
