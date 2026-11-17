@@ -7,6 +7,8 @@
 // the `Optional` and `Sequence` helpers renamed it the same way wherever they
 // were used.
 
+use std::collections::HashMap;
+
 #[derive(uniffi::Record, Clone, PartialEq, Debug)]
 pub struct InternalServerErrorProblem {
     detail: String,
@@ -25,6 +27,7 @@ pub enum Outcome {
     Problems { problems: Vec<InternalServerErrorProblem> },
     MaybeProblem { problem: Option<InternalServerErrorProblem> },
     Lookup { error: LookupError },
+    Lookups { first: Option<LookupError>, all: Vec<LookupError> },
     Ok,
 }
 
@@ -51,6 +54,42 @@ pub fn first_problem(
     problems: Vec<InternalServerErrorProblem>,
 ) -> Option<InternalServerErrorProblem> {
     problems.into_iter().next()
+}
+
+// A type with a trailing `Error` inside the compound helpers keeps its
+// `Exception` name there (`LookupException?`, `List<LookupException>`).
+#[derive(uniffi::Record, Clone, PartialEq, Debug)]
+pub struct LookupReport {
+    first: Option<LookupError>,
+    all: Vec<LookupError>,
+    by_key: HashMap<String, LookupError>,
+}
+
+#[uniffi::export]
+pub fn roundtrip_lookup_report(report: LookupReport) -> LookupReport {
+    report
+}
+
+#[uniffi::export]
+pub fn first_lookup_error(errors: Vec<LookupError>) -> Option<LookupError> {
+    errors.into_iter().next()
+}
+
+#[uniffi::export]
+pub fn roundtrip_maybe_lookup_error(error: Option<LookupError>) -> Option<LookupError> {
+    error
+}
+
+#[uniffi::export]
+pub fn roundtrip_lookup_errors(errors: Vec<LookupError>) -> Vec<LookupError> {
+    errors
+}
+
+#[uniffi::export]
+pub fn roundtrip_lookup_error_map(
+    errors: HashMap<String, LookupError>,
+) -> HashMap<String, LookupError> {
+    errors
 }
 
 uniffi::include_scaffolding!("api");

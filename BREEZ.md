@@ -16,17 +16,60 @@ upstream supports.
 
 ## Upstream status
 
-Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
+Last checked 2026-11-17 against `Uniffi-Dart/uniffi-dart`. The fork's base is
+upstream main at `ab977ca`, which is still upstream's main.
+
+Carried PRs, at the head the fork has:
+
+| PR | Head in the fork | Carried as |
+|---|---|---|
+| #178 | `9573490` | `upstream-pr-178` |
+| #181 | `325c0ea` | `savage-pr-181-on-0.29` (plus `a2944e7`) |
+| #183 | `ccc93d6` | `upstream-pr-183` |
+| #188 | `f0b7a21` | `savage-pr-188-on-0.29` |
+| #190 | `41e82ed` | `savage-pr-190-on-0.29`, adapted (Rust-future part only) |
+| #196 | `de8675a` | `upstream-pr-196` |
+
+Watched, not carried: #191 (Rust `Display` for error messages, would fix
+exceptions without a message), #149 (UniFFI 0.32, sets how far the 0.29 port
+drifts), and any new PR touching the callback listeners or relay, custom
+types, callback names or u64 callback results.
+
+To compare against upstream:
+
+```sh
+PRS="178 181 183 188 190 196 191 149"
+git fetch upstream main $(for p in $PRS; do printf 'pull/%s/head:refs/remotes/upstream/pr/%s ' $p $p; done)
+git rev-parse --short upstream/main        # expect the base above
+for p in $PRS; do echo "#$p $(git rev-parse --short upstream/pr/$p)"; done   # expect the heads above
+for p in $PRS; do gh pr view $p -R Uniffi-Dart/uniffi-dart \
+  --json number,state,isDraft,updatedAt --jq '"#\(.number) \(.state) draft=\(.isDraft) \(.updatedAt)"'; done
+# Comments and reviews since the last check
+since=2026-11-17T00:00:00Z
+for p in $PRS; do
+  gh api "repos/Uniffi-Dart/uniffi-dart/issues/$p/comments?since=$since" --jq ".[] | \"#$p comment \(.user.login) \(.created_at)\""
+  gh api "repos/Uniffi-Dart/uniffi-dart/pulls/$p/comments?since=$since" --jq ".[] | \"#$p review comment \(.user.login) \(.path)\""
+  gh api "repos/Uniffi-Dart/uniffi-dart/pulls/$p/reviews" --jq ".[] | select(.submitted_at > \"$since\") | \"#$p review \(.user.login) \(.state)\""
+done
+# New open PRs
+gh pr list -R Uniffi-Dart/uniffi-dart --state open --json number,title,updatedAt
+# What a moved head changed
+git diff <old head> upstream/pr/<n>
+```
+
+When a carried head moves: point its branch at the new head, merge it here,
+run the full suite and clippy, and update this file. A PR that merges upstream
+moves to the merged table and becomes part of the base.
 
 | Item | Upstream | Same as upstream? | Converges by |
 |---|---|---|---|
 | UniFFI 0.29.4 port (`savage-uniffi-v0.29.4`) | Fork-only, the allowed exception | No, by design | Dropped when the SDK moves to UniFFI 0.31 or later and uses upstream releases. |
 | #183 roll back owned arguments | Open, chavic | Yes, at its head `ccc93d6` | Upstream merge. |
 | #181 wire types in callbacks | Open, chavic | Yes, at its head `325c0ea`, plus one 0.29-only test change (`a2944e7`): a foreign trait returned through Rust comes back as a Rust-backed wrapper on 0.29 | Upstream merge. The test change goes with the port. |
-| #178 `status` argument names | Open, chavic | Yes, at its head `9573490`. The merge resolutions with #181 and #183 are what upstream needs too | Upstream merge. |
-| #196 `Error` inside type names | Open, ThoreKoritzius | Yes, at its head `c356e4f` | Upstream merge. |
+| #178 `status` argument names | Open, chavic. Approved by DenisovAV at `9573490` on 2026-11-17 | Yes, at its head `9573490`. The merge resolutions with #181 and #183 are what upstream needs too | Upstream merge. |
+| #196 `Error` inside type names | Open, ThoreKoritzius | Yes, at its head `de8675a`. It was force-pushed from `c356e4f` with 112 more fixture lines and the same generator change | Upstream merge. |
 | `savage-fix-enum-field-error-names` | Ours. Superseded by #196, not to be PR'd | Nothing of it is left: its code change is identical to #196's, and its fixture was removed (`df4ea33`), so the fork carries #196 as it stands | Nothing to converge. |
-| #190 fixed-width handles | Open, chavic | **No: partial.** Only the Rust-future part (`Uint64` future handles). Its object-handle parts don't apply, since 0.29 passes objects as pointers | Take #190 unchanged once the port goes. |
+| #190 fixed-width handles | Open, chavic | **No: partial.** Only the Rust-future part (`Uint64` future handles), adapted in `b3c33dd` from #190's head `41e82ed`. Its object-handle parts don't apply, since 0.29 passes objects as pointers. After its main commit `ca8b7ac`, #190 is test-only apart from `ce4fb6b`'s `Handle` field annotation, which the adaptation includes | Take #190 unchanged once the port goes. |
 | #188 u64 as `BigInt` | Open draft, chavic | Yes, at its head `f0b7a21`, plus the local fix in the next row. The merge moves #183's tests to `BigInt` | Upstream merge. |
 | `savage-u64-callback-results-bigint-on-0.29` | Local fix on top of #188 (`2d694b9`, on #188's head `f0b7a21`). Suggested on #188, but not part of it | **No.** #188 types u64 callback results as `Object`, so implementers lose type checking. This types them as `BigInt` (`Future<BigInt>` when async). #188's own commits are untouched | If #188 adopts the suggestion: take #188's new head and drop this branch. If #188 rejects it: this becomes fork-only, which the rule above doesn't allow, so revert the merge. Dart callbacks that return `BigInt` keep compiling against `Object`, so the SDK needs no change for the revert. |
 | #186 opt-in callback dispatch | Merged upstream | Yes (in the base), as changed by `savage-callback-relay`: its runtime is shared with the relay, and it wakes the isolate through a port | Already upstream; the changes go up with the relay PR. |
