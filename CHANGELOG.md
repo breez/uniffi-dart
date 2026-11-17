@@ -6,12 +6,11 @@ All notable changes to uniffi-dart will be documented in this file.
 
 ### Breaking changes
 
-- **BREAKING**: Deliver async callback methods, sync callback methods with no
-  return value and no error type, and callback frees through
+- **BREAKING**: Deliver async callback methods and callback frees through
   `NativeCallable.listener`, so Rust can call them from any thread (#161). They
   now run on a later event-loop turn, even on the isolate's own thread. Await
-  the new `uniffiCallbackBarrier()` to observe their effects. Rust's
-  cancellation of an async callback is no longer forwarded to Dart. See
+  the new `uniffiCallbackBarrier()` to wait for calls that are already queued.
+  Rust's cancellation of an async callback is no longer forwarded to Dart. See
   [docs/callback-threads.md](docs/callback-threads.md).
 
 ### Fixes

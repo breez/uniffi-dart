@@ -13,15 +13,11 @@ class Observer implements DisposalObserver {
 }
 
 void main() {
-  test('native destructor reentry observes the disposed state', () async {
+  test('native destructor reentry observes the disposed state', () {
     final observer = Observer();
     observer.object = ReentrantDisposable(observer: observer);
     observer.object.dispose();
     observer.object.dispose();
-    // `dropping` returns nothing, so the bindings deliver it through a listener
-    // after the destructor has returned.
-    expect(observer.calls, 0);
-    await uniffiCallbackBarrier();
     expect(observer.calls, 1);
   });
   test(

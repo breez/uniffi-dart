@@ -6,49 +6,42 @@ created with `Pointer.fromFunction` can only run on the thread of the isolate
 that created it. A call from anywhere else aborts the process with
 `Cannot invoke native callback outside an isolate` (#161).
 
-The generated bindings deliver every callback that doesn't hand a value back
-synchronously through
+The generated bindings deliver async methods and frees through
 [`NativeCallable.listener`](https://api.dart.dev/dart-ffi/NativeCallable/NativeCallable.listener.html),
 which accepts calls from any thread:
 
 | Callback | Delivery | From any thread |
 |---|---|---|
 | async method | listener | yes |
-| sync method with no return value and no error type | listener | yes |
 | `uniffi_free` (Rust dropped the callback object) | listener | yes |
-| sync method that returns a value or can throw | `Pointer.fromFunction` | only the isolate's own thread |
+| sync method | `Pointer.fromFunction` | only the isolate's own thread |
 | `uniffi_clone` | `Pointer.fromFunction` | only the isolate's own thread |
 
-The last two must write their result before Rust's call returns, which a
-listener can't do. Calling them from another thread still aborts.
+A sync method runs inline, while Rust's call waits, so calls on the isolate's
+own thread keep their order. Calling one from another thread still aborts.
 
-## When callbacks run
+## When listener calls run
 
 A listener call is queued to the isolate and runs on a later event-loop turn.
 This is true even when Rust makes the call on the isolate's own thread, during a
 synchronous Rust function. So:
 
-- A Rust function that calls a fire-and-forget method returns before the Dart
-  method runs.
-- A sync method that returns a value still runs inline, so it can run before
-  an earlier fire-and-forget call on the same object. If Rust calls `log()`
-  and then `logCount()` during one call on the isolate's thread, `logCount()`
-  doesn't see the log yet.
-- An exception from a fire-and-forget method can't reach Rust. It becomes an
-  uncaught error in the isolate's zone.
+- An async method starts after the Rust call that made it has returned. Rust
+  only sees its result by awaiting the future, so nothing that awaits it is
+  affected.
 - A callback object that Rust drops is removed from the bindings' handle map
   slightly later.
 
-The VM runs an isolate's listener calls in the order they were made. To observe
-their effects, for example in a test, await `uniffiCallbackBarrier()`. It
-completes after every callback that was queued before the call. For an async
-method it waits until the method has started, not until its future has
-completed.
+The VM runs an isolate's listener calls in the order they were made. To wait for
+calls that are already queued, for example to check handle counts in a test,
+await `uniffiCallbackBarrier()`. It completes after every callback that was
+queued before the call. For an async method it waits until the method has
+started, not until its future has completed.
 
 ```dart
-logInOrder(sink: sink, count: 3); // Rust calls sink.log three times.
+dropSinkOnThread(sink: Sink()); // Rust drops the sink on a worker thread.
 await uniffiCallbackBarrier();
-expect(sink.logs, ['0', '1', '2']);
+// The sink's handle has been released.
 ```
 
 ## Async methods and cancellation
@@ -71,21 +64,23 @@ an unrelated object with the same handle.
 Use callbacks from one long-lived isolate, normally the main isolate. Don't pass
 callbacks to Rust from `Isolate.run`, Flutter's `compute` or any other isolate
 that exits while Rust can still call it. Once the owning isolate has exited, a
-call aborts the process with `Callback invoked after it has been deleted`.
+listener call aborts the process with `Callback invoked after it has been
+deleted`.
 
-Callbacks don't keep their isolate alive (`keepIsolateAlive = false`). A command
-line program exits when `main` finishes, even if Rust still holds a callback,
-for example a logger. If you expect a callback, keep the isolate alive yourself,
-for example by awaiting a `Completer` that the callback completes. A call that
-Rust queues after the main isolate has exited is dropped as the process exits.
+Listeners don't keep their isolate alive (`keepIsolateAlive = false`). A command
+line program exits when `main` finishes, even if Rust still holds a callback. If
+you expect a callback, keep the isolate alive yourself, for example by awaiting
+a `Completer` that the callback completes. A call that Rust queues after the
+main isolate has exited is dropped as the process exits.
 
 ## Hot restart
 
 A Flutter hot restart replaces the main isolate but keeps the native library
 loaded, together with every callback object and vtable that Rust holds.
 
-- Until the new isolate passes a callback of a given type to Rust, Rust still
-  calls the old isolate's listeners, and the process aborts.
+- Until the new isolate passes a callback of a given type to Rust, an async
+  call or free of that type still targets the old isolate's listeners, and the
+  process aborts.
 - After that, Rust calls the new isolate. Handles carry a random per-isolate
   prefix on 64-bit targets, so a handle from the old isolate fails as a stale
   handle instead of reaching an object in the new one.
@@ -95,13 +90,13 @@ or use a full restart.
 
 ## Deadlocks
 
-A synchronous Rust function, called from Dart, that blocks until a callback has
-run deadlocks if that callback is delivered through a listener. The isolate's
-thread is blocked in the Rust call, so the queued callback can't run. Make such
-functions async, or don't wait for the callback.
+A synchronous Rust function, called from Dart, that blocks until an async
+callback has completed deadlocks. The isolate's thread is blocked in the Rust
+call, so the queued call can't run. Make such functions async.
 
 ## Opt-in dispatch
 
 With `callback_dispatch = true`, the generated companion library relays every
-synchronous callback instead, and the bindings keep using `Pointer.fromFunction`
-for all of them. See [callback-dispatch.md](callback-dispatch.md).
+synchronous callback, including the free, and the bindings keep using
+`Pointer.fromFunction` for them. It doesn't support async methods. See
+[callback-dispatch.md](callback-dispatch.md).

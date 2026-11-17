@@ -318,8 +318,9 @@ pub fn generate_callback_functions(
     type_helper: &dyn TypeHelperRenderer,
 ) -> dart::Tokens {
     let cls_name = &DartCodeOracle::class_name(callback_name);
-    // `callback_dispatch` relays every synchronous callback through its
-    // companion and rejects async ones, so it keeps `Pointer.fromFunction`.
+    // `callback_dispatch` relays the free through its companion like every
+    // other synchronous callback, so it keeps `Pointer.fromFunction`. It
+    // rejects async methods.
     let listeners = !type_helper.callback_dispatch();
 
     let functions: Vec<dart::Tokens> = methods.iter().enumerate().map(|(index, m)| {
@@ -445,26 +446,6 @@ pub fn generate_callback_functions(
                             }
                         }
                     }();
-                    } finally {
-                        $free_buffers
-                    }
-                }
-
-                $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, true))
-            }
-        } else if listeners && m.return_type().is_none() && m.throws_type().is_none() {
-            quote! {
-                $(line_comment(&[
-                    "Fire-and-forget NativeCallable.listener: Rust gets no result back, so",
-                    "this runs later on the isolate's event loop. `outReturn` and",
-                    "`callStatus` point into Rust's stack frame and must not be touched.",
-                    "An exception from the Dart method is an uncaught error in this isolate.",
-                ]))
-                void $callback_method_name(int uniffiHandle, $(for param in &param_types => $param,) Pointer<Void> outReturn, Pointer<RustCallStatus> callStatus) {
-                    try {
-                        final obj = FfiConverterCallbackInterface$cls_name._handleMap.get(uniffiHandle);
-                        $(arg_lifts)
-                        obj.$method_name($(for arg in &arg_names => $arg,));
                     } finally {
                         $free_buffers
                     }
