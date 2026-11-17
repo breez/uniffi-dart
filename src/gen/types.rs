@@ -736,13 +736,12 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 "Completes once this isolate has run every callback that Rust queued to",
                 "it before this call.",
                 "",
-                "Async callback methods, methods that return nothing and can't throw,",
-                "and callback frees are delivered through `NativeCallable.listener`.",
-                "They run on a later event-loop turn, even when Rust makes the call on",
-                "this isolate's own thread, so their effects aren't visible as soon as",
-                "the Rust call returns. Await this to observe them, for example in",
-                "tests. For an async method it waits until the method has started, not",
-                "until its future completes.",
+                "Async callback methods and callback frees are delivered through",
+                "`NativeCallable.listener`. They run on a later event-loop turn, even",
+                "when Rust makes the call on this isolate's own thread. Await this to",
+                "wait for calls that are already queued, for example to check handle",
+                "counts in tests. For an async method it waits until the method has",
+                "started, not until its future completes.",
             ]))
             Future<void> uniffiCallbackBarrier() {
                 final done = Completer<void>();

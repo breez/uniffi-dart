@@ -20,13 +20,11 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-/// A callback interface, like the SDK's `EventListener` and `Logger`.
+/// A callback interface, like the SDK's `EventListener`.
 #[uniffi::export(callback_interface)]
 #[async_trait::async_trait]
 pub trait EventSink: Send + Sync {
     async fn on_event(&self, event: String) -> u32;
-    fn log(&self, message: String);
-    fn log_count(&self) -> u32;
 }
 
 #[derive(Debug, uniffi::Error)]
@@ -83,60 +81,10 @@ pub async fn events_from_many_threads(sink: Box<dyn EventSink>, count: u32) -> u
     rx.fold(0, |sum, result| async move { sum + result }).await
 }
 
-/// Returns once every call was made, before Dart necessarily ran them.
+/// Drops the callback object, which calls `uniffi_free`, on the calling thread.
 #[uniffi::export]
-pub fn log_from_threads(sink: Box<dyn EventSink>, threads: u32) {
-    let sink: Arc<dyn EventSink> = Arc::from(sink);
-    let workers: Vec<_> = (0..threads)
-        .map(|i| {
-            let sink = sink.clone();
-            std::thread::spawn(move || sink.log(format!("thread {i}")))
-        })
-        .collect();
-    for worker in workers {
-        worker.join().expect("worker thread");
-    }
-}
-
-#[uniffi::export]
-pub fn log_from_tokio(sink: Box<dyn EventSink>, tasks: u32) {
-    let sink: Arc<dyn EventSink> = Arc::from(sink);
-    runtime().block_on(async move {
-        let tasks: Vec<_> = (0..tasks)
-            .map(|i| {
-                let sink = sink.clone();
-                tokio::spawn(async move { sink.log(format!("task {i}")) })
-            })
-            .collect();
-        for task in tasks {
-            task.await.expect("tokio task");
-        }
-    });
-}
-
-/// Calls `log` on the calling thread, which is the Dart thread here.
-#[uniffi::export]
-pub fn log_here(sink: Box<dyn EventSink>, message: String) {
-    sink.log(message);
-}
-
-/// Calls `log` and then `log_count` on the calling thread, and returns the count.
-#[uniffi::export]
-pub fn log_then_count(sink: Box<dyn EventSink>, message: String) -> u32 {
-    sink.log(message);
-    sink.log_count()
-}
-
-/// Logs `count` numbered messages from one worker thread, in order, and joins it.
-#[uniffi::export]
-pub fn log_in_order(sink: Box<dyn EventSink>, count: u32) {
-    std::thread::spawn(move || {
-        for i in 0..count {
-            sink.log(format!("{i}"));
-        }
-    })
-    .join()
-    .expect("worker thread");
+pub fn drop_sink_here(sink: Box<dyn EventSink>) {
+    drop(sink);
 }
 
 /// Drops the callback object, which calls `uniffi_free`, on a worker thread.

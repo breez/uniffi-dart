@@ -30,7 +30,7 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | #188 u64 as `BigInt` | Open draft, chavic | Yes, at its head `f0b7a21`. The merge moves #183's tests to `BigInt` | Upstream merge. |
 | #186 opt-in callback dispatch | Merged upstream | Yes (in the base) | Already upstream. |
 | `savage-async-callback-listeners-on-0.29` | Ours, superseded, not to be PR'd | Its `callback_listeners` flag is removed by the always-on merge | Nothing left in the tree. |
-| `savage-callback-listeners-always-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-listeners-always`) | Yes, plus 0.29 test adaptations. Being narrowed to async methods and frees, with sync callbacks moving to the relay PR | Upstream PR. |
+| `savage-callback-listeners-always-on-0.29` | Ours, to be PR'd (draft in `PR-DRAFT.md` on `savage-callback-listeners-always`) | Yes. Async methods and frees only: sync callbacks wait for the relay PR | Upstream PR. |
 | `BREEZ.md` | Fork-only | n/a | Goes with the fork. |
 
 ## Merged
@@ -45,7 +45,7 @@ Checked on 2026-11-17 against `Uniffi-Dart/uniffi-dart`.
 | `savage-pr-190-on-0.29` | port | Rust-future part of #190: future handles are `Uint64`, fixing the 32-bit ARM ABI. Its object-handle parts don't apply on 0.29. |
 | `savage-pr-188-on-0.29` | port | #188 (draft upstream): u64 as `BigInt`, with `int` or `BigInt` accepted as input. Applies to the port unchanged. The merge resolves conflicts with #178 and #181 and moves #183's tests to `BigInt`. |
 | `savage-async-callback-listeners-on-0.29` | port | Superseded by the next row. Opt-in `callback_listeners = true`: async methods, fire-and-forget sync methods and `uniffi_free` become `NativeCallable.listener`s that any thread may call (#161). |
-| `savage-callback-listeners-always-on-0.29` | port | Ours, from `savage-callback-listeners-always` (upstream main, upstreamable, draft in its `PR-DRAFT.md`). The same listener delivery, always on, replacing the `callback_listeners` flag. Adds `uniffiCallbackBarrier()`, drops the async cancel hook, and gives handles a random per-isolate prefix for hot restart. See `docs/callback-threads.md`. The merge moves #183's handle-count tests and #178's status test to await the barrier. |
+| `savage-callback-listeners-always-on-0.29` | port | Ours, from `savage-callback-listeners-always` (upstream main, upstreamable, draft in its `PR-DRAFT.md`). Listener delivery always on, replacing the `callback_listeners` flag. Adds `uniffiCallbackBarrier()`, drops the async cancel hook, and gives handles a random per-isolate prefix for hot restart. See `docs/callback-threads.md`. The merge moves #183's handle-count tests and #178's status test to await the barrier. A later merge narrows it to async methods and frees, so sync void methods run inline again, and #178's test is back to its original form. |
 | `upstream-pr-196` | upstream main | #196: name types with `Error` inside their name by their declared Dart name, in enum variant fields and in `Optional`/`Sequence` helpers. Supersedes `savage-fix-enum-field-error-names`, whose identical code change it replaces. |
 | `savage-fix-enum-field-error-names` (again) | upstream main | Drops that branch's `enum-error-named-fields` fixture, so the fork carries #196 exactly. |
 

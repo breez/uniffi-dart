@@ -227,19 +227,13 @@ void main() {
     },
   );
 
-  test('Rust-owned with_foreign callback can be passed back into Rust', () async {
+  test('Rust-owned with_foreign callback can be passed back into Rust', () {
     final persister = InMemoryEventPersister().asPersister();
 
-    // UniFFI 0.29 lifts the Rust-backed persister as a foreign handle, so
-    // Rust's save and load go through the Dart vtable. `save` returns nothing
-    // and is delivered through a listener after the Rust call, while `load`
-    // runs inline, so Rust's load doesn't see the save yet.
     expect(
       saveAndLoadPersister(persister: persister, event: 'payjoin-session'),
-      isEmpty,
+      equals(['payjoin-session']),
     );
-    await uniffiCallbackBarrier();
-    expect(persister.load(), equals(['payjoin-session']));
   });
 
   test('getString preserves expected SimpleException.BadArgument', () {

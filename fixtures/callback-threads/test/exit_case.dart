@@ -6,12 +6,6 @@ import '../callback_threads.dart';
 class _Sink implements EventSink {
   @override
   Future<int> onEvent(String event) async => event.length;
-
-  @override
-  void log(String message) {}
-
-  @override
-  int logCount() => 0;
 }
 
 Future<void> main() async {

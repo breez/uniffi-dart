@@ -44,9 +44,9 @@ void main() {
     expect(pureCallbackHandlesForTest(), before);
     expect(callback.calls, 0);
     expect(takePureCallback(consumer: callback, small: 7), 7);
-    // ping and the free both return nothing, so they run after the call.
-    await uniffiCallbackBarrier();
     expect(callback.calls, 1);
+    // Rust frees the consumer through a listener, after the call.
+    await uniffiCallbackBarrier();
     expect(pureCallbackHandlesForTest(), before);
   });
   test('nested scopes restore their enclosing owner after failed cleanup', () {

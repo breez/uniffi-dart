@@ -11,7 +11,6 @@ import '../callback_threads.dart';
 
 class Sink implements EventSink {
   final events = <String>[];
-  final logs = <String>[];
   Completer<void>? gate;
 
   @override
@@ -23,12 +22,6 @@ class Sink implements EventSink {
     }
     return event.length;
   }
-
-  @override
-  void log(String message) => logs.add(message);
-
-  @override
-  int logCount() => logs.length;
 }
 
 class MemoryStore implements Store {
@@ -80,43 +73,13 @@ void main() {
     expect(total, sink.events.fold<int>(0, (sum, e) => sum + e.length));
   });
 
-  test('fire-and-forget sync method from std::threads', () async {
-    final sink = Sink();
-    logFromThreads(sink: sink, threads: 8);
-    await eventually(() => sink.logs.length == 8, 'eight logs');
-    expect(sink.logs.toSet(), {for (var i = 0; i < 8; i++) 'thread $i'});
-  });
-
-  test('fire-and-forget sync method from tokio tasks', () async {
-    final sink = Sink();
-    logFromTokio(sink: sink, tasks: 8);
-    await eventually(() => sink.logs.length == 8, 'eight logs');
-    expect(sink.logs.toSet(), {for (var i = 0; i < 8; i++) 'task $i'});
-  });
-
-  test('a fire-and-forget call on the Dart thread runs after the call', () async {
-    final sink = Sink();
-    logHere(sink: sink, message: 'later');
-    // Delivered through the listener even on this thread, so not yet.
-    expect(sink.logs, isEmpty);
+  test('a free on the Dart thread runs after the call', () async {
+    final before = eventSinkHandlesForTest();
+    dropSinkHere(sink: Sink());
+    // The free is delivered through the listener even on this thread.
+    expect(eventSinkHandlesForTest(), before + 1);
     await uniffiCallbackBarrier();
-    expect(sink.logs, ['later']);
-  });
-
-  test('a value method can run before an earlier fire-and-forget call', () async {
-    final sink = Sink();
-    // Rust calls log and then logCount on this thread. log is queued, while
-    // logCount returns a value and runs inline, so it sees no logs yet.
-    expect(logThenCount(sink: sink, message: 'first'), 0);
-    await uniffiCallbackBarrier();
-    expect(sink.logs, ['first']);
-  });
-
-  test('the barrier waits for calls queued from another thread, in order', () async {
-    final sink = Sink();
-    logInOrder(sink: sink, count: 200);
-    await uniffiCallbackBarrier();
-    expect(sink.logs, [for (var i = 0; i < 200; i++) '$i']);
+    expect(eventSinkHandlesForTest(), before);
   });
 
   test('the barrier waits for a free queued from a worker thread', () async {
