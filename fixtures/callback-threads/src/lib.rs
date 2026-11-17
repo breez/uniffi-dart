@@ -1,7 +1,8 @@
 //! Rust calls Dart callbacks from threads other than Dart's: `std::thread`
-//! workers and tokio tasks. Async methods and `uniffi_free` are delivered
-//! through `NativeCallable.listener`, which any thread may call. With
-//! `Pointer.fromFunction` each of these calls aborts the Dart VM ("Cannot
+//! workers and tokio tasks. With the callback relay library bundled, every
+//! callback goes through it. Without it, async methods and `uniffi_free` are
+//! delivered through `NativeCallable.listener`. The fixture runs both ways.
+//! With `Pointer.fromFunction` each of these calls aborts the Dart VM ("Cannot
 //! invoke native callback outside an isolate").
 
 use std::sync::{Arc, OnceLock};

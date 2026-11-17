@@ -1,0 +1,88 @@
+/// Native asset id of the generated callback relay library.
+const uniffiCallbackRelayAsset = '@ASSET@';
+@Native<Uint64 Function()>(assetId: uniffiCallbackRelayAsset, symbol: '@PROBE@')
+external int _uniffiRelayAbiHash();
+@Native<Uint64 Function(Int64, Pointer<Void>)>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_create',
+)
+external int _uniffiRelayCreate(int port, Pointer<Void> api);
+@Native<Void Function(Uint64)>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_drain',
+)
+external void _uniffiRelayDrain(int endpoint);
+@Native<Bool Function(Uint64)>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_pending',
+)
+external bool _uniffiRelayPending(int endpoint);
+
+/// Whether the relay has calls queued for this isolate. The relay runs at
+/// most 64 per wake-up, so the barrier checks this before completing.
+bool _uniffiRelayHasQueuedCalls() {
+  final id = UniffiCallbackRelay._checked ? UniffiCallbackRelay._endpoint : null;
+  return id != null && _uniffiRelayPending(id);
+}
+const _uniffiExpectedRelayAbiHash = @HASH@;
+
+/// This isolate's connection to the generated callback relay library.
+///
+/// When the library is bundled, every callback goes through it: inline on this
+/// isolate's thread, and queued to this isolate from any other thread. Without
+/// it, async methods and frees still arrive through listeners, but synchronous
+/// callbacks can only run on this isolate's thread.
+abstract final class UniffiCallbackRelay {
+  static bool _checked = false;
+  static int? _endpoint;
+  static RawReceivePort? _port;
+  static final _warned = <String>{};
+
+  /// This isolate's relay endpoint, or null when the library isn't bundled.
+  static int? get endpoint {
+    if (_checked) return _endpoint;
+    _checked = true;
+    final int hash;
+    try {
+      hash = _uniffiRelayAbiHash();
+    } catch (_) {
+      // The asset isn't bundled.
+      return null;
+    }
+    if (hash != _uniffiExpectedRelayAbiHash) {
+      throw StateError(
+        'The callback relay library does not match these bindings (its ABI '
+        'hash is 0x${hash.toRadixString(16)}, the bindings expect '
+        '0x${_uniffiExpectedRelayAbiHash.toRadixString(16)}). Rebuild the '
+        'uniffi_dispatch crate generated with these bindings.',
+      );
+    }
+    // The relay wakes this isolate by posting to the port. Posting to a closed
+    // port fails instead of aborting, so the relay notices when the isolate
+    // has exited. Like listeners, the port doesn't keep the isolate alive.
+    final port = RawReceivePort((_) {
+      final id = _endpoint;
+      if (id != null) _uniffiRelayDrain(id);
+    }, 'uniffi callback relay');
+    port.keepIsolateAlive = false;
+    final id = _uniffiRelayCreate(
+      port.sendPort.nativePort,
+      NativeApi.initializeApiDLData,
+    );
+    if (id == 0) {
+      port.close();
+      throw UnsupportedError(
+        'This Dart VM does not provide the isolate checks the callback relay '
+        'needs',
+      );
+    }
+    _port = port;
+    _endpoint = id;
+    return id;
+  }
+
+  /// Prints [message] once per [component] in this isolate.
+  static void warnMissing(String component, String message) {
+    if (_warned.add(component)) print(message);
+  }
+}

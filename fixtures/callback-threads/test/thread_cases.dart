@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
@@ -73,13 +74,18 @@ void main() {
     expect(total, sink.events.fold<int>(0, (sum, e) => sum + e.length));
   });
 
-  test('a free on the Dart thread runs after the call', () async {
+  test('a free on the Dart thread', () async {
     final before = eventSinkHandlesForTest();
     dropSinkHere(sink: Sink());
-    // The free is delivered through the listener even on this thread.
-    expect(eventSinkHandlesForTest(), before + 1);
-    await uniffiCallbackBarrier();
-    expect(eventSinkHandlesForTest(), before);
+    if (Platform.environment['UNIFFI_DART_COMPANION'] == 'bundled') {
+      // The relay runs it inline, as Pointer.fromFunction did.
+      expect(eventSinkHandlesForTest(), before);
+    } else {
+      // The listener delivers it after the call, even on this thread.
+      expect(eventSinkHandlesForTest(), before + 1);
+      await uniffiCallbackBarrier();
+      expect(eventSinkHandlesForTest(), before);
+    }
   });
 
   test('the barrier waits for a free queued from a worker thread', () async {

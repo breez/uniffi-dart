@@ -127,12 +127,14 @@ checks and precision boundaries.
 
 ## Callbacks and threads
 
-Rust may call async callback methods and callback frees from any thread. The
-bindings deliver them through `NativeCallable.listener`, so they run on a later
-turn of the owning isolate's event loop. Await `uniffiCallbackBarrier()` to wait
-for calls that are already queued. Synchronous callback methods still run only
-on the owning isolate's thread. See [docs/callback-threads.md](docs/callback-threads.md)
-for ordering, isolate ownership and hot restart.
+Rust may call Dart callbacks from any thread once the app bundles the callback
+relay library that generation writes to `uniffi_dispatch/`. Calls on the owning
+isolate's thread run inline. Calls from other threads are queued to it, and
+Rust waits for a result when it needs one. Without that library, async methods
+and frees still work from any thread, through `NativeCallable.listener`, but
+synchronous callback methods run only on the owning isolate's thread. See
+[docs/callback-threads.md](docs/callback-threads.md) for bundling, ordering,
+isolate ownership and hot restart.
 
 ## Versioning
 

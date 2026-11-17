@@ -1,4 +1,5 @@
-//! Opt-in generated native adapters for synchronous, 64-bit callback dispatch.
+//! The generated native companion: the callback relay, and the opt-in
+//! adapters for synchronous, 64-bit callback dispatch.
 use super::{oracle::DartCodeOracle, Config};
 use anyhow::{bail, Result};
 use genco::prelude::*;
@@ -9,8 +10,9 @@ use uniffi_bindgen::{
     ComponentInterface,
 };
 
+pub mod relay;
 
-/// Runtime shared by every generated companion.
+/// Runtime shared by the relay and dispatch companions.
 pub const CORE_RUNTIME: &str = include_str!("core.rs.txt");
 /// Runtime used only by opt-in dispatch.
 const DISPATCH_RUNTIME: &str = include_str!("dispatch.rs.txt");

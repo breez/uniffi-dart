@@ -3,6 +3,7 @@ use heck::ToUpperCamelCase;
 use uniffi_bindgen::interface::ffi::{FfiStruct, FfiType};
 use uniffi_bindgen::interface::{AsType, Method, Type};
 
+use crate::gen::dispatch::relay;
 use crate::gen::oracle::{AsCodeType, DartCodeOracle};
 use crate::gen::render::{line_comment, AsRenderable, Renderable, TypeHelperRenderer};
 use crate::gen::CodeType;
@@ -60,7 +61,7 @@ impl Renderable for CallbackInterfaceCodeType {
             callback.name(),
             &callback.methods(),
             &ffi_module,
-            type_helper.callback_dispatch(),
+            type_helper,
         );
 
         quote! {
@@ -449,6 +450,10 @@ pub fn generate_callback_functions(
                 }
 
                 $(callback_registration(callback_method_name, &format!("{callback_method_name}Pointer"), ffi_method_type, true))
+                $(if listeners {
+                    final Pointer<NativeFunction<$ffi_method_type>> $(callback_method_name)InlinePointer =
+                        Pointer.fromFunction<$ffi_method_type>($callback_method_name);
+                })
             }
         } else {
             // Handle return value using the oracle
@@ -505,6 +510,10 @@ pub fn generate_callback_functions(
         }
 
         $(callback_registration(free_callback_fn, free_callback_pointer, free_callback_type, listeners))
+        $(if listeners {
+            final Pointer<NativeFunction<$free_callback_type>> $(free_callback_fn.replace("FreeCallback", "FreeInlinePointer")) =
+                Pointer.fromFunction<$free_callback_type>($free_callback_fn);
+        })
 
         int $clone_callback_fn(int handle) {
             try {
@@ -658,41 +667,99 @@ pub fn generate_callback_interface_vtable_init_function(
     callback_name: &str,
     methods: &[&Method],
     ffi_module: &str,
-    callback_dispatch: bool,
+    type_helper: &dyn TypeHelperRenderer,
 ) -> dart::Tokens {
+    let callback_dispatch = type_helper.callback_dispatch();
     let vtable_name = &format!("UniffiVTableCallbackInterface{callback_name}");
     let vtable_static_instance_name =
-        format!("{}{}", DartCodeOracle::fn_name(callback_name), "VTable");
+        &format!("{}{}", DartCodeOracle::fn_name(callback_name), "VTable");
     let init_fn_name = &format!("init{callback_name}VTable");
     let snake_callback = callback_name.to_lowercase();
+    let cls_name = &DartCodeOracle::class_name(callback_name);
+    let fn_base = DartCodeOracle::fn_name(callback_name);
+    // `inline` picks the Pointer.fromFunction variant of each listener, for the
+    // relay to call on the owning isolate's thread.
+    let fill = |target: &str, inline: bool| -> dart::Tokens {
+        let suffix = |listener: bool| if inline && listener { "InlinePointer" } else { "Pointer" };
+        quote! {
+            $target.ref.uniffiFree = $(format!("{fn_base}Free{}", suffix(true)));
+            $target.ref.uniffiClone = $(format!("{fn_base}ClonePointer"));
+            $(for m in methods {
+                $target.ref.$(DartCodeOracle::fn_name(m.name())) = $(format!("{fn_base}{}{}", DartCodeOracle::class_name(m.name()), suffix(m.is_async())));
+            })
+        }
+    };
+    let init_call = quote! {
+        rustCall((status) {
+            uniffi_$(ffi_module)_fn_init_callback_vtable_$(snake_callback)(
+                $vtable_static_instance_name,
+            );
+            checkCallStatus(NullRustCallStatusErrorHandler(), status);
+        });
+    };
 
+    if callback_dispatch {
+        return quote! {
+            late final Pointer<$vtable_name> $vtable_static_instance_name;
+
+            void $init_fn_name() {
+                // Make initialization idempotent - return early if already initialized
+                if (FfiConverterCallbackInterface$cls_name._vtableInitialized) {
+                    return;
+                }
+
+                $vtable_static_instance_name = calloc<$vtable_name>();
+                $(fill(vtable_static_instance_name, false))
+
+                $init_call
+
+                calloc.free($vtable_static_instance_name);
+
+                // Update the flag to prevent re-initialization
+                FfiConverterCallbackInterface$cls_name._vtableInitialized = true;
+            }
+        };
+    }
+
+    let ci = type_helper.get_ci();
+    let install_symbol = relay::install_symbol(ci.namespace(), callback_name);
+    let install_fn = &format!("_uniffiRelayInstall{callback_name}");
+    let warn = relay::missing_warning_applies(ci);
     quote! {
-        late final Pointer<$vtable_name> $(&vtable_static_instance_name);
+        late final Pointer<$vtable_name> $vtable_static_instance_name;
+
+        @Native<Pointer<$vtable_name> Function(Uint64, Pointer<$vtable_name>)>(
+            assetId: uniffiCallbackRelayAsset,
+            symbol: $(quoted(install_symbol)),
+        )
+        external Pointer<$vtable_name> $install_fn(int endpoint, Pointer<$vtable_name> inline);
 
         void $init_fn_name() {
             // Make initialization idempotent - return early if already initialized
-            if (FfiConverterCallbackInterface$(DartCodeOracle::class_name(callback_name))._vtableInitialized) {
+            if (FfiConverterCallbackInterface$cls_name._vtableInitialized) {
                 return;
             }
 
-            $(&vtable_static_instance_name) = calloc<$vtable_name>();
-            $(&vtable_static_instance_name).ref.uniffiFree = $(format!("{}FreePointer", DartCodeOracle::fn_name(callback_name)));
-            $(&vtable_static_instance_name).ref.uniffiClone = $(format!("{}ClonePointer", DartCodeOracle::fn_name(callback_name)));
-            $(for m in methods {
-                $(&vtable_static_instance_name).ref.$(DartCodeOracle::fn_name(m.name())) = $(DartCodeOracle::fn_name(callback_name))$(DartCodeOracle::class_name(m.name()))Pointer;
-            })
+            final relay = UniffiCallbackRelay.endpoint;
+            if (relay != null) {
+                $(line_comment(&[
+                    "The relay copies these and gives Rust its own proxies, which call",
+                    "them inline on this isolate's thread and queue calls from any other.",
+                ]))
+                final inline = calloc<$vtable_name>();
+                $(fill("inline", true))
+                $vtable_static_instance_name = $install_fn(relay, inline);
+                calloc.free(inline);
+            } else {
+                $(if warn => UniffiCallbackRelay.warnMissing($(quoted(ci.namespace())), _uniffiCallbackRelayMissing);)
+                $vtable_static_instance_name = calloc<$vtable_name>();
+                $(fill(vtable_static_instance_name, false))
+            }
 
-            rustCall((status) {
-                uniffi_$(ffi_module)_fn_init_callback_vtable_$(snake_callback)(
-                    $(&vtable_static_instance_name),
-                );
-                checkCallStatus(NullRustCallStatusErrorHandler(), status);
-            });
-
-            $(if callback_dispatch => calloc.free($(&vtable_static_instance_name));)
+            $init_call
 
             // Update the flag to prevent re-initialization
-            FfiConverterCallbackInterface$(DartCodeOracle::class_name(callback_name))._vtableInitialized = true;
+            FfiConverterCallbackInterface$cls_name._vtableInitialized = true;
         }
     }
 }
