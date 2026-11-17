@@ -7,7 +7,7 @@ import 'tracking_allocator.dart' as tracker;
 
 class ReentrantConsumer implements Consumer {
   @override
-  Object accept(String payload, int small) {
+  BigInt accept(String payload, int small) {
     expect(() => take(payload: 'nested', small: 256), throwsArgumentError);
     return take(payload: 'ok', small: small);
   }

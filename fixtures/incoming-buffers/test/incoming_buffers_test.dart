@@ -9,19 +9,19 @@ import '../incoming_buffers.dart';
 class Consumer implements BufferConsumer {
   List<Uint8List> saved = [];
   @override
-  int consume(Uint8List first, Uint8List second) {
+  BigInt consume(Uint8List first, Uint8List second) {
     saved = [first, second];
-    return first.length + second.length;
+    return BigInt.from(first.length + second.length);
   }
 }
 
 class AsyncConsumer implements AsyncBufferConsumer {
   List<Uint8List> saved = [];
   @override
-  Future<int> consume(Uint8List first, Uint8List second) async {
+  Future<BigInt> consume(Uint8List first, Uint8List second) async {
     await Future<void>.delayed(Duration.zero);
     saved = [first, second];
-    return first.length + second.length;
+    return BigInt.from(first.length + second.length);
   }
 }
 
