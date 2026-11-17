@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:ffi';
+import 'dart:isolate';
 
 import 'package:test/test.dart';
 
@@ -133,6 +135,19 @@ void main() {
       storeRoundtripOnTokio(store: store, key: '', value: 'v'),
       throwsA(isA<EmptyKeyStoreException>()),
     );
+  });
+
+  test('handles from different isolates do not collide', () async {
+    // After a hot restart Rust may still hold the old isolate's handles. They
+    // must not match the new isolate's handles. Only the handle map is used in
+    // the other isolate: lowering a callback there would move the vtable to it.
+    final here = UniffiHandleMap<int>().insert(0);
+    final there = await Isolate.run(() => UniffiHandleMap<int>().insert(0));
+    expect(here & 1, 1);
+    expect(there & 1, 1);
+    if (sizeOf<IntPtr>() == 8) {
+      expect(here, isNot(there));
+    }
   });
 
   test('a sync method that returns a value runs on the Dart thread', () {

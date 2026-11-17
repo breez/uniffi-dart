@@ -13,6 +13,12 @@ All notable changes to uniffi-dart will be documented in this file.
   Rust's cancellation of an async callback is no longer forwarded to Dart. See
   [docs/callback-threads.md](docs/callback-threads.md).
 
+### Fixes
+
+- Give callback handles a random per-isolate prefix on 64-bit targets, so
+  handles left over from before a hot restart can't reach objects in the new
+  isolate
+
 ## v0.2.1+v0.31.2
 
 ### Changes
