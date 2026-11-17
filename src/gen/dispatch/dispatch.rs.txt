@@ -1,0 +1,171 @@
+// Opt-in dispatch: native entry calls run on workers while the owner pumps.
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("callback dispatch currently requires a 64-bit target");
+use std::thread;
+#[derive(Clone)]
+struct Route {
+    endpoint: u64,
+    local: u64,
+    kind: &'static str,
+}
+static ROUTES: OnceLock<Mutex<HashMap<u64, Route>>> = OnceLock::new();
+fn routes() -> &'static Mutex<HashMap<u64, Route>> {
+    ROUTES.get_or_init(Default::default)
+}
+fn route(id: u64, kind: &'static str) -> Route {
+    let r = routes().lock().unwrap().get(&id).expect("unknown callback handle").clone();
+    assert_eq!(r.kind, kind);
+    r
+}
+fn register(ep: u64, local: u64, kind: &'static str) -> u64 {
+    let id = next_id();
+    routes().lock().unwrap().insert(id, Route { endpoint: ep, local, kind });
+    id
+}
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_unregister(ep: u64, handle: u64) {
+    let mut map = routes().lock().unwrap();
+    assert_eq!(map.get(&handle).unwrap().endpoint, ep);
+    map.remove(&handle).unwrap();
+}
+fn run<R: Send + 'static>(id: u64, f: impl FnOnce() -> R + Send + 'static) -> R {
+    let ep = endpoint(id);
+    ep.enter(false);
+    let _active = Active(ep.clone());
+    let notify = ep.clone();
+    let (tx, rx) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        let value = thread::spawn(f).join().unwrap();
+        tx.send(value).unwrap();
+        notify.push(Job::new(|| {}));
+    });
+    let value = loop {
+        match rx.try_recv() {
+            Ok(v) => break v,
+            Err(mpsc::TryRecvError::Empty) => {
+                ep.pump(true);
+            }
+            Err(mpsc::TryRecvError::Disconnected) => panic!("native worker lost completion"),
+        }
+    };
+    worker.join().unwrap();
+    value
+}
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_has_routes(id: u64) -> bool {
+    routes().lock().unwrap().values().any(|route| route.endpoint == id)
+}
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_close(id: u64) -> bool {
+    let ep = endpoint(id);
+    let routes = routes().lock().unwrap();
+    if routes.values().any(|r| r.endpoint == id) {
+        return false;
+    }
+    let mut s = ep.state.lock().unwrap();
+    if s.active != 0 || s.notified || !s.jobs.is_empty() {
+        return false;
+    }
+    s.closed = true;
+    endpoints().lock().unwrap().remove(&id);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    unsafe extern "C" fn alive(_: i64, _: *mut DartCObject) -> bool {
+        true
+    }
+    unsafe extern "C" fn exited(_: i64, _: *mut DartCObject) -> bool {
+        false
+    }
+    #[test]
+    fn close_waits_for_pending_notification() {
+        let id = create_endpoint(0, alive, None, 0);
+        let ep = endpoint(id);
+        ep.push(Job::new(|| {}));
+        assert!(!uniffi_dispatch_close(id));
+        uniffi_dispatch_drain(id);
+        assert!(uniffi_dispatch_close(id));
+        assert!(!endpoints().lock().unwrap().contains_key(&id));
+    }
+    #[test]
+    fn close_keeps_other_isolates_routes_alive() {
+        let first = create_endpoint(0, alive, None, 0);
+        let second = create_endpoint(0, alive, None, 0);
+        let handle = register(second, 1, "test");
+        assert!(uniffi_dispatch_close(first));
+        assert!(!uniffi_dispatch_close(second));
+        assert_eq!(route(handle, "test").endpoint, second);
+        routes().lock().unwrap().remove(&handle).unwrap();
+        assert!(uniffi_dispatch_close(second));
+    }
+    #[test]
+    fn close_waits_for_active_call() {
+        let id = create_endpoint(0, alive, None, 0);
+        let ep = endpoint(id);
+        ep.enter(false);
+        assert!(!uniffi_dispatch_close(id));
+        ep.leave();
+        assert!(uniffi_dispatch_close(id));
+    }
+    #[test]
+    fn owner_callback_outside_run_executes_inline() {
+        unsafe extern "C" fn current() -> *mut c_void {
+            7usize as *mut _
+        }
+        let id = create_endpoint(0, alive, Some(current), 7);
+        assert_eq!(dispatch(&endpoint(id), || 42), Some(42));
+        assert!(uniffi_dispatch_close(id));
+    }
+    #[test]
+    fn worker_thread_local_destructor_can_dispatch() {
+        struct OnExit(Arc<Endpoint>);
+        impl Drop for OnExit {
+            fn drop(&mut self) {
+                assert_eq!(dispatch(&self.0, || 42), Some(42));
+            }
+        }
+        thread_local! { static ON_EXIT: std::cell::RefCell<Option<OnExit>> = const { std::cell::RefCell::new(None) }; }
+        let id = create_endpoint(0, alive, None, 0);
+        let ep = endpoint(id);
+        assert_eq!(
+            run(id, move || {
+                ON_EXIT.with(|slot| *slot.borrow_mut() = Some(OnExit(ep)));
+                17
+            }),
+            17
+        );
+        while endpoint(id).pump(false) {}
+        assert!(uniffi_dispatch_close(id));
+    }
+    #[test]
+    fn exited_owner_fails_sync_calls_and_abandons_queued_ones() {
+        let id = create_endpoint(0, exited, None, 0);
+        let ep = endpoint(id);
+        assert_eq!(dispatch(&ep, || 42), None);
+        let (tx, rx) = mpsc::channel();
+        post_to_owner(&ep, || panic!("must not run"), move || tx.send(()).unwrap());
+        rx.recv_timeout(Duration::from_secs(1)).expect("abandon ran");
+        assert!(ep.is_dead());
+    }
+    #[test]
+    fn a_lost_wake_up_is_noticed_on_the_next_push() {
+        static ALIVE: AtomicBool = AtomicBool::new(true);
+        unsafe extern "C" fn post(_: i64, _: *mut DartCObject) -> bool {
+            ALIVE.load(Ordering::SeqCst)
+        }
+        let id = create_endpoint(0, post, None, 0);
+        let ep = endpoint(id);
+        let (tx, rx) = mpsc::channel();
+        let first = tx.clone();
+        // Queued while the owner was alive, then the isolate exits undrained.
+        post_to_owner(&ep, || panic!("must not run"), move || first.send(1).unwrap());
+        ALIVE.store(false, Ordering::SeqCst);
+        post_to_owner(&ep, || panic!("must not run"), move || tx.send(2).unwrap());
+        let mut abandoned: Vec<i32> = rx.iter().take(2).collect();
+        abandoned.sort();
+        assert_eq!(abandoned, [1, 2]);
+    }
+}
