@@ -18,7 +18,9 @@ use std::fmt::Write;
 
 use anyhow::{bail, Result};
 use camino::Utf8Path;
-use uniffi_bindgen::interface::{FfiCallbackFunction, FfiDefinition, FfiStruct, FfiType, Method};
+use uniffi_bindgen::interface::{
+    Callable, FfiCallbackFunction, FfiDefinition, FfiFunction, FfiStruct, FfiType, Method,
+};
 use uniffi_bindgen::ComponentInterface;
 
 use super::{fnv1a64, native_type, result_type, CORE_RUNTIME};
@@ -65,9 +67,37 @@ pub fn has_callbacks(ci: &ComponentInterface) -> bool {
 }
 
 /// Whether `ci` uses the companion: for its callbacks, or to free its
-/// objects from NativeFinalizers.
+/// objects and in-flight Rust futures from NativeFinalizers.
 pub fn needs_companion(ci: &ComponentInterface) -> bool {
-    has_callbacks(ci) || !ci.object_definitions().is_empty()
+    has_callbacks(ci) || !ci.object_definitions().is_empty() || !future_frees(ci).is_empty()
+}
+
+/// UniFFI's free functions for the Rust futures of the component's async
+/// calls: one for each FFI return type they use.
+pub fn future_frees(ci: &ComponentInterface) -> Vec<FfiFunction> {
+    let mut used = std::collections::BTreeSet::new();
+    for f in ci.function_definitions().iter().filter(|f| f.is_async()) {
+        used.insert(f.ffi_rust_future_free(ci));
+    }
+    for obj in ci.object_definitions() {
+        for c in obj.constructors().into_iter().filter(|c| c.is_async()) {
+            used.insert(c.ffi_rust_future_free(ci));
+        }
+        for m in obj.methods().into_iter().filter(|m| m.is_async()) {
+            used.insert(m.ffi_rust_future_free(ci));
+        }
+    }
+    ci.iter_ffi_function_definitions().filter(|f| used.contains(f.name())).collect()
+}
+
+/// Symbol of the function that gives the companion a Rust future free.
+pub fn future_set_free_symbol(free_name: &str) -> String {
+    format!("uniffi_relay_set_{free_name}")
+}
+
+/// Symbol of the NativeFinalizer callback that frees a Rust future.
+pub fn future_finalize_symbol(free_name: &str) -> String {
+    format!("uniffi_relay_finalize_{free_name}")
 }
 
 pub fn delivery(field: &str, methods: &[Method]) -> Result<Delivery> {
@@ -146,6 +176,18 @@ struct Slot {
     delivery: Delivery,
 }
 
+/// Something the companion frees for a NativeFinalizer.
+struct Freeable {
+    /// The object type, or the future free function's name.
+    key: String,
+    /// The native type of the free's first argument: a pointer or handle.
+    arg: String,
+    /// Whether the free also takes a call status.
+    status: bool,
+    set_symbol: String,
+    finalize_symbol: String,
+}
+
 struct Component<'a> {
     ci: &'a ComponentInterface,
     callbacks: BTreeMap<String, FfiCallbackFunction>,
@@ -194,20 +236,37 @@ impl<'a> Component<'a> {
         Ok(out)
     }
 
-    /// Each object type and the native type of its free function's first
-    /// argument, the object's pointer or handle.
-    fn frees(&self) -> Result<Vec<(String, String)>> {
-        self.ci
-            .object_definitions()
-            .iter()
-            .map(|obj| {
-                let free = obj.ffi_object_free();
-                let Some(arg) = free.arguments().first().map(|arg| arg.type_()) else {
-                    bail!("the free function of `{}` takes no object", obj.name())
-                };
-                Ok((obj.name().to_owned(), native_type(&arg)))
-            })
-            .collect()
+    /// What the companion frees for NativeFinalizers: each object type, and
+    /// each kind of Rust future.
+    fn frees(&self) -> Result<Vec<Freeable>> {
+        let ns = self.namespace();
+        let first_arg = |free: &FfiFunction| -> Result<String> {
+            let Some(arg) = free.arguments().first().map(|arg| arg.type_()) else {
+                bail!("`{}` takes nothing to free", free.name())
+            };
+            Ok(native_type(&arg))
+        };
+        let mut frees = Vec::new();
+        for obj in self.ci.object_definitions() {
+            let free = obj.ffi_object_free();
+            frees.push(Freeable {
+                key: obj.name().to_owned(),
+                arg: first_arg(free)?,
+                status: free.has_rust_call_status_arg(),
+                set_symbol: set_free_symbol(ns, obj.name()),
+                finalize_symbol: finalize_symbol(ns, obj.name()),
+            });
+        }
+        for free in future_frees(self.ci) {
+            frees.push(Freeable {
+                key: free.name().to_owned(),
+                arg: first_arg(&free)?,
+                status: free.has_rust_call_status_arg(),
+                set_symbol: future_set_free_symbol(free.name()),
+                finalize_symbol: future_finalize_symbol(free.name()),
+            });
+        }
+        Ok(frees)
     }
 
     fn canonical(&self, out: &mut String) -> Result<()> {
@@ -232,8 +291,8 @@ impl<'a> Component<'a> {
                 writeln!(out, "  {}: {:?}", slot.field, slot.delivery)?;
             }
         }
-        for (name, arg) in self.frees()? {
-            writeln!(out, "finalize {}: {arg}", finalize_symbol(self.namespace(), &name))?;
+        for free in self.frees()? {
+            writeln!(out, "finalize {}: {} {}", free.finalize_symbol, free.arg, free.status)?;
         }
         Ok(())
     }
@@ -259,47 +318,54 @@ impl<'a> Component<'a> {
         for vtable in self.vtables()? {
             self.write_vtable(source, &vtable)?;
         }
-        for (name, arg) in self.frees()? {
-            self.write_free(source, &name, &arg)?;
+        for free in self.frees()? {
+            self.write_free(source, &free)?;
         }
         writeln!(source, "}}")?;
         Ok(())
     }
 
-    /// An object type's NativeFinalizer callback, which only queues the
-    /// object for the free thread, and the function that registers the
-    /// type's UniFFI free. The companion doesn't link the original library,
-    /// so the bindings pass the free's address in.
-    fn write_free(&self, source: &mut String, name: &str, arg: &str) -> Result<()> {
-        let ns = self.namespace();
+    /// A NativeFinalizer callback, which only queues the object or future for
+    /// the free thread, and the function that registers its UniFFI free. The
+    /// companion doesn't link the original library, so the bindings pass the
+    /// free's address in.
+    fn write_free(&self, source: &mut String, free: &Freeable) -> Result<()> {
+        let Freeable { key, arg, status, set_symbol, finalize_symbol } = free;
+        let (signature, call) = if *status {
+            (
+                format!("unsafe extern \"C\" fn({arg}, *mut RustCallStatus)"),
+                format!(
+                    "let mut status: RustCallStatus = std::mem::zeroed();
+        free(token as {arg}, &mut status);"
+                ),
+            )
+        } else {
+            (format!("unsafe extern \"C\" fn({arg})"), format!("free(token as {arg});"))
+        };
         writeln!(
             source,
-            "static FREE_{name}: std::sync::atomic::AtomicUsize =
+            "static FREE_{key}: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
-type Free{name} = unsafe extern \"C\" fn({arg}, *mut RustCallStatus);
-unsafe fn free_{name}(token: usize) {{
-    let free = FREE_{name}.load(Ordering::Acquire);
+unsafe fn free_{key}(token: usize) {{
+    let free = FREE_{key}.load(Ordering::Acquire);
     if free != 0 {{
-        let free = std::mem::transmute::<usize, Free{name}>(free);
-        let mut status: RustCallStatus = std::mem::zeroed();
-        free(token as {arg}, &mut status);
+        let free = std::mem::transmute::<usize, {signature}>(free);
+        {call}
     }}
 }}
 #[no_mangle]
 /// # Safety
-/// `free` must be the UniFFI free function of `{name}`.
-pub unsafe extern \"C\" fn {}(free: Free{name}) {{
-    FREE_{name}.store(free as usize, Ordering::Release);
+/// `free` must be UniFFI's `{key}` free function.
+pub unsafe extern \"C\" fn {set_symbol}(free: {signature}) {{
+    FREE_{key}.store(free as usize, Ordering::Release);
     reaper();
 }}
 #[no_mangle]
 /// # Safety
-/// `token` must be a `{name}` that Dart owns and no longer uses.
-pub unsafe extern \"C\" fn {}(token: *mut c_void) {{
-    reap(token as usize, free_{name});
-}}",
-            set_free_symbol(ns, name),
-            finalize_symbol(ns, name)
+/// `token` must be a `{key}` that Dart owns and no longer uses.
+pub unsafe extern \"C\" fn {finalize_symbol}(token: *mut c_void) {{
+    reap(token as usize, free_{key});
+}}"
         )?;
         Ok(())
     }
