@@ -24,6 +24,19 @@ class Sink implements EventSink {
   }
 }
 
+class Notes implements Notifier {
+  final messages = <String>[];
+
+  @override
+  void notify(String message) => messages.add(message);
+
+  @override
+  Future<void> notifyLater(String message) async => messages.add(message);
+
+  @override
+  int count() => messages.length;
+}
+
 class MemoryStore implements Store {
   final values = <String, String>{};
 
@@ -149,6 +162,25 @@ void main() {
       expect(here, isNot(there));
     }
   });
+
+  test('void calls for an exited isolate\'s callback are dropped', () async {
+    // An isolate registers a notifier and exits while Rust still holds it, as
+    // the old isolate does in a hot restart.
+    await Isolate.run(() => holdNotifier(notifier: Notes()));
+    // This isolate takes the vtable over, as the new isolate does.
+    final mine = Notes();
+    notifyWith(notifier: mine, message: 'mine');
+    expect(mine.messages, ['mine']);
+
+    // The old isolate's handle misses here. A method that returns nothing
+    // and can't throw reports success instead of making Rust panic.
+    notifyHeld(message: 'sync');
+    expect(await notifyHeldLaterOnTokio(message: 'async'), isTrue);
+    // One that returns a value still fails: Rust needs a value.
+    expect(countHeld, throwsA(anything));
+    expect(mine.messages, ['mine']);
+    releaseNotifier();
+  }, skip: sizeOf<IntPtr>() == 8 ? false : 'handles have no per-isolate prefix');
 
   test('a sync method that returns a value runs on the Dart thread', () {
     expect(readStoreName(store: MemoryStore()), 'memory');
