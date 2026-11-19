@@ -172,3 +172,14 @@ final class _UniffiRelayContinuation implements _UniffiContinuation {
 
 _UniffiContinuation? _uniffiRelayContinuation(void Function(int) onPoll) =>
     _UniffiRelayContinuation.open(onPoll);
+
+/// The relay's NativeFinalizer for one object type, or null when the relay
+/// isn't bundled. [register] first gives the relay the type's UniFFI free.
+NativeFinalizer? uniffiRelayObjectFinalizer(
+  void Function() register,
+  Pointer<NativeFinalizerFunction> Function() finalize,
+) {
+  if (UniffiCallbackRelay.endpoint == null) return null;
+  register();
+  return NativeFinalizer(finalize());
+}

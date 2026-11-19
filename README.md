@@ -132,7 +132,8 @@ relay library that generation writes to `uniffi_dispatch/`. Calls on the owning
 isolate's thread run inline. Calls from other threads are queued to it, and
 Rust waits for a result when it needs one. Without that library, async methods
 and frees still work from any thread, through `NativeCallable.listener`, but
-synchronous callback methods run only on the owning isolate's thread. See
+synchronous callback methods run only on the owning isolate's thread. With the
+library, Rust objects are also freed after their isolate exits. See
 [docs/callback-threads.md](docs/callback-threads.md) for bundling, ordering,
 isolate ownership and hot restart.
 
