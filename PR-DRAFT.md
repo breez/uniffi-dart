@@ -3,7 +3,7 @@
 # Relay callbacks from any thread through the generated companion
 
 Stacked on #PR1 (listener delivery for async methods and frees). Review that
-first: this PR is the four commits after it.
+first: this PR is the six commits after it.
 
 #PR1 lets Rust call async callback methods and frees from any thread. A
 synchronous callback is harder. Rust reads its out-return and call status as
@@ -79,15 +79,17 @@ so is a free. Any other synchronous call gets an unexpected error in its call
 status, and any other async call is completed with a zeroed result and an
 unexpected error, so a Rust task awaiting it doesn't hang. For a method without
 an error type, UniFFI turns that error into a panic on the calling Rust thread.
-The first of these logs one warning. A hot restart's new isolate takes each
-callback type over the first time it passes a callback of that type to Rust.
+The first of these logs one warning. A hot restart's new isolate doesn't take
+anything over: its callbacks work as soon as it passes them to Rust, and the
+old isolate's keep failing or being dropped (see below).
 
 The third commit adds the async half of the dropping. Before it, an async
 method that returns nothing was completed with an unexpected error. For a
 method with no error type that's a Rust panic, which in a `panic = "abort"` app
 ended the process at the first event after a hot restart. Such methods get
-their own delivery kind, so the ABI hash changes. #PR1 drops the same kinds of call when
-they reach the new isolate through an old handle.
+their own delivery kind, so the ABI hash changes. #PR1 drops the same kinds of
+call when they reach a new isolate through an old handle, which is what
+happens without the companion.
 
 The death is noticed when a post fails. Every queued call posts, rather than
 coalescing wake-ups, because an isolate that dies with a wake-up outstanding
@@ -110,6 +112,33 @@ it if the isolate has exited. The port keeps the isolate alive while a future
 is pending, as the listener did. Without the companion, async calls keep the
 listener.
 
+### Several isolates
+
+UniFFI keeps one vtable per callback type for the whole process, and an isolate
+installs its own the first time it passes a callback of that type to Rust. So
+with plain vtables, the last isolate to do that gets every call of the type,
+including calls for other isolates' objects, which fail there. Two isolates
+can't implement the same callback interface, for example an app's main isolate
+and a background isolate that handles push notifications.
+
+The sixth commit routes each call to the isolate that owns its object. With
+the companion bundled, callback handles come from the companion, which records
+the owning isolate's endpoint for each one. Each callback type keeps an inline
+vtable per isolate, and the proxies pick one by the call's handle, which is
+always the first argument. Rust still sees one vtable. A free also drops the
+handle's record. The handles come from one process-wide counter, so they're
+unique across isolates, never reused, and small enough for the pointer that
+carries them on 32-bit targets. That makes #PR1's random handle prefix
+unnecessary when the companion is bundled, and it keeps working without it.
+
+An exited isolate keeps its vtables, so calls through its handles still reach
+its endpoint, where they fail or are dropped as above. That makes an existing
+check matter more, so the fifth commit tightens it first. Deciding whether a
+call is on the owning isolate's thread compared isolate addresses, and a new
+isolate can reuse an exited one's address, which would run the exited
+isolate's callback inline and abort. It now also compares the isolate's main
+port, from the same Dart API table, which is never reused.
+
 ### Limits
 
 - A synchronous Rust call made from Dart that waits for another thread's
@@ -127,10 +156,14 @@ listener.
 - A callback from the isolate's own thread while Dart isn't running there, for
   example Flutter platform code calling into Rust, looks like any other thread
   and deadlocks the same way.
-- Calls for an object registered by another isolate reach the isolate that
-  installed the vtable last, as before, and fail there as a stale handle
-  instead of aborting, or are dropped for methods that return nothing and
-  can't throw.
+- A callback object stays with the isolate that passed it to Rust. If Rust
+  hands it to code running in another isolate, its calls still go to the
+  first one.
+- Without the companion, the last isolate to install a callback type's vtable
+  gets every call of that type, as before.
+- An exited isolate's vtables and handle records stay with the companion for
+  the life of the process. They're small, but each hot restart adds one entry
+  per callback type.
 - An async callback that is still running in an isolate when it exits never
   completes, so the Rust future awaiting it waits forever. Rust code that
   awaits callbacks one at a time, such as an event loop delivering to
@@ -162,9 +195,12 @@ also runs without it, which keeps #PR1's listener path covered. The new
 - a foreign trait passed to a callback on another thread (`uniffi_clone`);
 - async methods and frees from other threads;
 - callbacks of an exited isolate failing instead of aborting, with sync and
-  async void calls dropped as if they had succeeded, and a new isolate taking
-  the type over, where void calls through the old isolate's callback are
-  dropped too;
+  async void calls dropped as if they had succeeded, including after a new
+  isolate has registered its own callback of the same type;
+- two live isolates implementing the same callback interface, each getting
+  its own sync, void and async calls from std and tokio threads, and the
+  survivor still working after the other exits. Before the sixth commit, the
+  first isolate's calls failed;
 - an async Rust call that finishes on a tokio worker after its isolate was
   killed, which aborted with `Callback invoked after it has been deleted`
   before the fourth commit;
@@ -178,7 +214,7 @@ Generator unit tests cover each slot's delivery, the ABI hash, and the warning
 literal.
 
 `cargo test --workspace` passes on macOS arm64 with Dart 3.14.0: all 45 test
-targets, 317 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
+targets, 318 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
 and `cargo fmt --check` are clean. The generated relay crates for the
 `callback-relay`, `callbacks` and `dart_async` fixtures are clippy-clean with
 `-D warnings` on Rust 1.85.0 and on stable. #186's generated probe passes in JIT
