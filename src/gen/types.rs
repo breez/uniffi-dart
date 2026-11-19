@@ -653,7 +653,9 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 "but each isolate numbers its handles itself. After a Flutter hot",
                 "restart, Rust can still hold handles from the old isolate. A random",
                 "per-isolate prefix makes those miss in the new isolate's maps instead",
-                "of reaching (or freeing) its objects. Until callback handles are",
+                "of reaching (or freeing) its objects. A miss fails the call, except",
+                "that `uniffiDropCallback` drops calls to methods that return nothing",
+                "and can't throw. Until callback handles are",
                 "lowered as Uint64, 32-bit targets carry them in a pointer, so they get",
                 "no prefix there.",
             ]))
@@ -682,6 +684,10 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 return obj;
                 }
 
+                T? maybeGet(int handle) {
+                return _map[handle];
+                }
+
                 T remove(int handle) {
                 final obj = maybeRemove(handle);
                 if (obj == null) {
@@ -694,6 +700,33 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 T? maybeRemove(int handle) {
                 return _map.remove(handle);
                 }
+            }
+
+            bool _uniffiDroppedCallbackWarned = false;
+
+            $(doc_comment(&[
+                "Drops a call to a callback method that returns nothing and can't throw,",
+                "made for a callback object this isolate doesn't have: in practice one",
+                "registered by an isolate that has exited, for example before a hot",
+                "restart. Rust sees the call succeed. Reporting an unexpected error",
+                "instead would panic in Rust, since the method has no error type, and",
+                "with `panic = \"abort\"` that ends the process. Logs one warning per",
+                "isolate.",
+            ]))
+            void uniffiDropCallback(String method) {
+                if (_uniffiDroppedCallbackWarned) {
+                    return;
+                }
+                _uniffiDroppedCallbackWarned = true;
+                // Concatenated, since genco escapes `$` in string literals.
+                print(
+                    "uniffi-dart: dropped a call to " + method +
+                    " for a callback object that "
+                    "this isolate does not have, most likely one registered by an "
+                    "isolate that has exited, for example before a hot restart. Calls "
+                    "that return nothing and cannot throw are dropped this way, as if "
+                    "they had succeeded.",
+                );
             }
 
 
