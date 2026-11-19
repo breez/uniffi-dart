@@ -44,6 +44,15 @@ from the old isolate then miss in the new isolate's maps instead of reaching,
 or freeing, the object that got the same number. It's separable if you'd
 rather take it on its own.
 
+The last commit deals with what the prefix exposes. A call through an old
+handle reported a stale-handle error, which UniFFI turns into a Rust panic when
+the method has no error type. In an app built with `panic = "abort"`, a hot
+restart then ended the process at the first log line or event after the
+restart. For a method that returns nothing and can't throw, the call is now
+dropped: Rust sees it succeed, and the bindings print one warning per isolate.
+Calls that return a value or can throw still fail, since Rust needs the value
+or can handle the error.
+
 `docs/callback-threads.md` covers delivery, cancellation, isolate ownership,
 `keepIsolateAlive` and hot restart.
 
@@ -69,6 +78,13 @@ applies to async APIs, objects and external types too.
   re-registers are unsupported while Rust retains callbacks. Today the same
   calls abort as well, from the wrong thread or isolate. The follow-up PR
   makes them fail instead of aborting when the companion is bundled.
+- A call through an old handle to a method that returns a value and has no
+  error type still panics in Rust, because there's no value to give it.
+- An async Rust function that Dart called and that is still running when its
+  isolate is replaced in a hot restart, or killed, wakes the old isolate's
+  continuation listener when it finishes, and the process crashes. That's how
+  `uniffiRustCallAsync` already behaves. The follow-up PR routes continuations
+  through the companion when it's bundled.
 - `keepIsolateAlive = false` means a command line program exits when `main`
   finishes, even if Rust holds a callback. Keeping the isolate alive while
   callbacks exist would make any program that installs a long-lived callback
@@ -88,7 +104,10 @@ VM abort fails the test instead of the runner. They cover async methods, 32
 concurrent calls, frees on worker threads and on the isolate's thread, a Rust
 future dropped before Dart completes, foreign-trait errors, the barrier,
 cross-isolate handle prefixes, and a program exiting while Rust holds a
-callback.
+callback. One case keeps a callback from an isolate that has exited and calls
+it after the test's isolate has taken the vtable over. Without the last commit,
+its sync and async void calls panicked in Rust with `Callback interface
+failure: UnexpectedUniFFICallbackError(reason: "UniFfi::UnexpectedStaleHandle")`.
 
 The `dart_async` completion tests now check that the out-param is left
 untouched, including for a late success or error.
@@ -97,7 +116,7 @@ With async methods and frees switched back to `Pointer.fromFunction`, the child
 aborts with the #161 error and both fixture tests fail.
 
 `cargo test --workspace` passes on macOS arm64 with Dart 3.14.0: all 38 test
-targets, 282 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
+targets, 283 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
 and `cargo fmt --check` are clean. The generated dispatch probe passes in JIT
 and AOT, with the companion built on Rust 1.85.0 (1.85.1 wasn't installed). I
 also ran the fixtures on Android (an arm64 emulator and a 32-bit Galaxy A13)
