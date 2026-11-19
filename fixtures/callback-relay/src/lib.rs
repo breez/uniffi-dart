@@ -281,4 +281,29 @@ pub async fn finish_later(ms: u32) -> u32 {
         .expect("tokio task")
 }
 
+static DROPPED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Counts its drops, so the finalizer tests can see when the bindings free it.
+#[derive(uniffi::Object)]
+pub struct Droppable;
+
+#[uniffi::export]
+impl Droppable {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+
+impl Drop for Droppable {
+    fn drop(&mut self) {
+        DROPPED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[uniffi::export]
+pub fn dropped_count() -> u32 {
+    DROPPED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 uniffi::include_scaffolding!("api");
