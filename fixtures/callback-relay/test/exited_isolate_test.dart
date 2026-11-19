@@ -28,9 +28,10 @@ void main() {
     // The free goes to the exited isolate too.
     releaseKept();
 
-    // Another isolate keeps a callback and exits. A new isolate takes the
-    // vtable over, as after a hot restart, so calls through the old callback
-    // reach the new isolate, where its handle misses.
+    // Another isolate keeps a callback and exits. A new isolate registers its
+    // own, as after a hot restart. Calls through the old callback still go to
+    // the exited isolate, so they fail or are dropped, and never reach the new
+    // one.
     await Isolate.run(() => keep(keeper: DartKeeper(1)));
     final restored = await Isolate.run(() async {
       final mine = DartKeeper(5);
@@ -40,7 +41,7 @@ void main() {
         await keptNoteLaterFromTokio(value: 7),
       ];
       final failed = await keptValueFromThread();
-      // Replacing the old callback frees it, which misses here too.
+      // Replacing the old callback frees it, in the exited isolate.
       keep(keeper: mine);
       final value = await keptValueFromThread();
       releaseKept();

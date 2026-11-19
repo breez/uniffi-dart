@@ -16,7 +16,8 @@ bundles the generated callback relay library:
 | async method | starts inline on the isolate's thread. From another thread, queued | `NativeCallable.listener` from any thread, starting on a later event-loop turn |
 | `uniffi_free` | inline on the isolate's thread. From another thread, queued | `NativeCallable.listener` from any thread, on a later event-loop turn |
 
-"The isolate" is the one that owns the callback type's vtable (see
+"The isolate" is the one that passed the callback object to Rust, or without
+the relay library, the one that owns the callback type's vtable (see
 [Isolates](#isolates)). Bundle the relay library whenever Rust may call a
 synchronous callback from another thread.
 
@@ -115,15 +116,23 @@ to completion. Rust ignores the late result.
 
 ## Isolates
 
-UniFFI keeps one vtable per callback type for the whole process. An isolate
-installs its vtable the first time it passes a callback of that type to Rust,
-replacing any earlier one. From then on, Rust calls of that type reach that
-isolate, including calls for objects registered by other isolates. On 64-bit
-targets those fail with a stale-handle error, or are dropped for methods that
-return nothing and can't throw (see
+With the relay library, each call goes to the isolate that passed that
+callback object to Rust, so several isolates can implement the same callback
+type at once, for example the main isolate and one that handles push
+notifications. The relay gives out every callback handle and records which
+isolate owns it. A callback object stays with that isolate, even if Rust hands
+it to code running in another one.
+
+Without the relay library, UniFFI keeps one vtable per callback type for the
+whole process. An isolate installs its vtable the first time it passes a
+callback of that type to Rust, replacing any earlier one. From then on, Rust
+calls of that type reach that isolate, including calls for objects registered
+by other isolates. On 64-bit targets those fail with a stale-handle error, or
+are dropped for methods that return nothing and can't throw (see
 [Exited isolates and hot restart](#exited-isolates-and-hot-restart)). On 32-bit
-targets they can reach an unrelated object with the same handle. Use callbacks
-from one long-lived isolate, normally the main isolate.
+targets they can reach an unrelated object with the same handle. Without the
+relay library, use callbacks from one long-lived isolate, normally the main
+isolate.
 
 Callbacks don't keep their isolate alive. A command line program exits when
 `main` finishes, even if Rust still holds a callback. If you expect a callback,
@@ -139,24 +148,26 @@ loaded, together with every callback object and vtable that Rust holds. The
 same happens when an isolate from `Isolate.run` or `compute` exits while Rust
 still holds its callbacks.
 
-With the relay library, calls for an isolate that has exited don't crash. A
-call to a method that returns nothing and can't throw, sync or async, is
-dropped as if it had succeeded. Any other call fails with an unexpected error:
-a synchronous call returns one to Rust, and an async call completes with one.
-For a method without an error type, UniFFI turns that error into a panic on
-the calling Rust thread. The relay logs one warning. After a hot restart,
-the new isolate takes over each callback type the first time it passes a
-callback of that type to Rust. Handles carry a random per-isolate prefix on
-64-bit targets, so a handle from the old isolate misses in the new isolate
-instead of reaching an object there.
+With the relay library, calls for an isolate that has exited don't crash,
+and they never reach another isolate. A call to a method that returns nothing
+and can't throw, sync or async, such as a logger's `log` or an event
+listener's `onEvent`, is dropped as if it had succeeded. Any other call fails
+with an unexpected error: a synchronous call returns one to Rust, and an async
+call completes with one. The relay logs one warning. After a hot restart, the
+new isolate's callbacks work as soon as it passes them to Rust, while calls
+through the old isolate's callbacks keep failing or being dropped.
 
-A call through an old handle to a method that returns nothing and can't throw,
-such as a logger's `log` or an event listener's `onEvent`, is dropped: Rust
-sees it succeed, and the bindings print one warning per isolate. Any other call
-fails with an unexpected error. For a method without an error type, UniFFI
-turns that error into a Rust panic, which ends the process in a build with
-`panic = "abort"`. Give such methods an error type, or release their callbacks
-before the restart.
+Without the relay library, the new isolate takes over each callback type the
+first time it passes a callback of that type to Rust, and from then on gets
+calls through the old isolate's callbacks too. Handles carry a random
+per-isolate prefix on 64-bit targets, so an old handle misses in the new
+isolate instead of reaching an object there. The call is then dropped or fails
+as it would with the relay library, and the bindings print one warning per
+isolate.
+
+Either way, a failed call to a method without an error type becomes a Rust
+panic, which ends the process in a build with `panic = "abort"`. Give such
+methods an error type, or release their callbacks before the restart.
 
 An async Rust function that Dart called and that is still running when its
 isolate is replaced, or killed, finishes without calling into it: the relay

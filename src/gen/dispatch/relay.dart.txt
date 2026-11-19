@@ -22,6 +22,28 @@ external bool _uniffiRelayPending(int endpoint);
   symbol: 'uniffi_dispatch_continue',
 )
 external void _uniffiRelayContinue(int data, int pollResult);
+@Native<Uint64 Function(Uint64)>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_handle_new',
+)
+external int _uniffiRelayNewHandle(int endpoint);
+@Native<Void Function(Uint64)>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_handle_release',
+)
+external void _uniffiRelayReleaseHandle(int handle);
+
+/// A callback handle from the relay, which records that this isolate owns it
+/// and sends every call on it here. Null when the relay isn't bundled.
+int? _uniffiRelayHandleNew() {
+  final endpoint = UniffiCallbackRelay.endpoint;
+  return endpoint == null ? null : _uniffiRelayNewHandle(endpoint);
+}
+
+/// Tells the relay that Rust has given [handle] up.
+void _uniffiRelayHandleRelease(int handle) {
+  if (UniffiCallbackRelay._endpoint != null) _uniffiRelayReleaseHandle(handle);
+}
 
 /// Whether the relay has calls queued for this isolate. The relay runs at
 /// most 64 per wake-up, so the barrier checks this before completing.

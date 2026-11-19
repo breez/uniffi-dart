@@ -1,7 +1,9 @@
 //! The callback relay companion.
 //!
 //! Every callback interface and foreign trait vtable goes through generated
-//! native proxies when the companion is bundled. On the owning isolate's
+//! native proxies when the companion is bundled. The companion gives out the
+//! callback handles, so each call goes to the isolate that owns its handle,
+//! and several isolates can implement the same type. On the owning isolate's
 //! thread a proxy calls the Dart function inline, as `Pointer.fromFunction`
 //! would. From any other thread it queues the call to the isolate and wakes
 //! it through a port: calls that return nothing don't wait, and calls that
@@ -227,30 +229,29 @@ impl<'a> Component<'a> {
     fn write_vtable(&self, source: &mut String, vtable_def: &Vtable<'_>) -> Result<()> {
         let name = &vtable_def.callback_name;
         let vtable = vtable_def.table.name();
-        let slot = format!("SLOT_{name}");
-        writeln!(
-            source,
-            "struct Slot{name} {{ ep: Arc<Endpoint>, inline: {vtable} }}
-static {slot}: Mutex<Option<Arc<Slot{name}>>> = Mutex::new(None);
-fn slot_{name}() -> Arc<Slot{name}> {{
-    {slot}.lock().unwrap().clone().expect(\"relay vtable installed before use\")
-}}"
-        )?;
+        writeln!(source, "static SLOTS_{name}: Slots<{vtable}> = Slots::new();")?;
         for Slot { field, callback: cb_name, delivery } in &vtable_def.slots {
             let cb = &self.callbacks[cb_name];
             let args = arguments(cb);
             let params = (0..args.len()).map(|i| format!("a{i}: {}", args[i])).collect::<Vec<_>>();
             let all = (0..args.len()).map(|i| format!("a{i}")).collect::<Vec<_>>();
             let ret = result_type(cb.return_type());
+            // The first argument of every slot is the callback handle, which
+            // picks the isolate. A freed handle is forgotten right away, so
+            // the relay doesn't keep it if its isolate has exited.
+            let release = if *delivery == Delivery::Free {
+                "\n    uniffi_dispatch_handle_release(a0);"
+            } else {
+                ""
+            };
             writeln!(
                 source,
                 "unsafe extern \"C\" fn proxy_{name}_{field}({}) -> {ret} {{
-    let slot = slot_{name}();
-    let f = slot.inline.r#{field};
-    if slot.ep.on_owner_thread() {{
+    let (ep, inline) = SLOTS_{name}.route(a0);{release}
+    let f = inline.r#{field};
+    if ep.on_owner_thread() {{
         return f({});
-    }}
-    let ep = slot.ep.clone();",
+    }}",
                 params.join(", "),
                 all.join(", ")
             )?;
@@ -372,7 +373,7 @@ fn slot_{name}() -> Arc<Slot{name}> {{
 /// callbacks that run inline on that isolate's thread.
 pub unsafe extern \"C\" fn {}(ep: u64, inline: *const {vtable}) -> *const {vtable} {{
     probe_endpoints();
-    *{slot}.lock().unwrap() = Some(Arc::new(Slot{name} {{ ep: endpoint(ep), inline: *inline }}));
+    SLOTS_{name}.install(endpoint(ep), *inline);
     &PROXY_{name}
 }}",
             install_symbol(self.namespace(), name)
