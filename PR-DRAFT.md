@@ -3,7 +3,7 @@
 # Relay callbacks from any thread through the generated companion
 
 Stacked on #PR1 (listener delivery for async methods and frees). Review that
-first: this PR is the two commits after it.
+first: this PR is the four commits after it.
 
 #PR1 lets Rust call async callback methods and frees from any thread. A
 synchronous callback is harder. Rust reads its out-return and call status as
@@ -73,19 +73,42 @@ made from Dart that waits for a callback on another thread.
 ### Exited isolates
 
 When Rust calls back into an isolate that has exited, after a hot restart or an
-`Isolate.run` that registered a callback, a synchronous call gets an unexpected
-error in its call status. For a method without an error type, UniFFI turns
-that into a panic on the calling Rust thread. An async call is completed with a
-zeroed result and an unexpected error, so a Rust task awaiting it doesn't hang.
-A call that returns nothing, or a free, is dropped. The first of these logs one
-warning. A hot restart's new isolate takes each callback type over the first
-time it passes a callback of that type to Rust.
+`Isolate.run` that registered a callback, a call to a method that returns
+nothing and can't throw is dropped as if it had succeeded, sync or async, and
+so is a free. Any other synchronous call gets an unexpected error in its call
+status, and any other async call is completed with a zeroed result and an
+unexpected error, so a Rust task awaiting it doesn't hang. For a method without
+an error type, UniFFI turns that error into a panic on the calling Rust thread.
+The first of these logs one warning. A hot restart's new isolate takes each
+callback type over the first time it passes a callback of that type to Rust.
+
+The third commit adds the async half of the dropping. Before it, an async
+method that returns nothing was completed with an unexpected error. For a
+method with no error type that's a Rust panic, which in a `panic = "abort"` app
+ended the process at the first event after a hot restart. Such methods get
+their own delivery kind, so the ABI hash changes. #PR1 drops the same kinds of call when
+they reach the new isolate through an old handle.
 
 The death is noticed when a post fails. Every queued call posts, rather than
 coalescing wake-ups, because an isolate that dies with a wake-up outstanding
 would otherwise never be noticed. Installing a vtable and a stalled
 synchronous call also probe, so calls queued just before the isolate died
 still complete.
+
+### Async Rust calls that outlive their isolate
+
+An async Rust function that Dart awaits wakes Dart through a continuation
+callback, which `uniffiRustCallAsync` creates as a `NativeCallable.listener`
+for each call. If the isolate is replaced by a hot restart, or killed, while
+the function is running, Rust later wakes that listener from its own thread,
+and the VM aborts with `Callback invoked after it has been deleted`. The fourth
+commit passes Rust the companion's `uniffi_dispatch_continue` instead, when the
+companion is bundled. The callback data carries the isolate's endpoint and the
+isolate's id for the future. The companion posts each wake-up to the isolate's
+relay port, where the bindings look the future up and poll it again, and drops
+it if the isolate has exited. The port keeps the isolate alive while a future
+is pending, as the listener did. Without the companion, async calls keep the
+listener.
 
 ### Limits
 
@@ -106,7 +129,16 @@ still complete.
   and deadlocks the same way.
 - Calls for an object registered by another isolate reach the isolate that
   installed the vtable last, as before, and fail there as a stale handle
-  instead of aborting.
+  instead of aborting, or are dropped for methods that return nothing and
+  can't throw.
+- An async callback that is still running in an isolate when it exits never
+  completes, so the Rust future awaiting it waits forever. Rust code that
+  awaits callbacks one at a time, such as an event loop delivering to
+  listeners, stops there. The companion could complete such calls when it
+  finds the endpoint dead, but that means routing every completion through it,
+  so I've left it for a follow-up.
+- A Rust future whose awaiting isolate has exited is never freed, since
+  nothing is left to call its free function.
 - A call that returns nothing and throws after Rust stopped waiting, from
   another thread, can't report the error to Rust. The relay logs one warning,
   and the error buffer leaks, since the companion doesn't link the original
@@ -129,8 +161,15 @@ also runs without it, which keeps #PR1's listener path covered. The new
 - a relayed callback that calls into Rust, which calls back inline;
 - a foreign trait passed to a callback on another thread (`uniffi_clone`);
 - async methods and frees from other threads;
-- callbacks of an exited isolate failing instead of aborting, and a new
-  isolate taking the type over;
+- callbacks of an exited isolate failing instead of aborting, with sync and
+  async void calls dropped as if they had succeeded, and a new isolate taking
+  the type over, where void calls through the old isolate's callback are
+  dropped too;
+- an async Rust call that finishes on a tokio worker after its isolate was
+  killed, which aborted with `Callback invoked after it has been deleted`
+  before the fourth commit;
+- a command line program whose only pending work is an async Rust call, in a
+  child process, which must not exit before the call finishes;
 - the deadlock warning, in a child process that the test kills.
 
 Without the companion, the same fixture checks that sync callbacks run inline,
@@ -139,7 +178,7 @@ Generator unit tests cover each slot's delivery, the ABI hash, and the warning
 literal.
 
 `cargo test --workspace` passes on macOS arm64 with Dart 3.14.0: all 45 test
-targets, 312 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
+targets, 317 Dart cases. `cargo clippy --workspace --all-targets -D warnings`
 and `cargo fmt --check` are clean. The generated relay crates for the
 `callback-relay`, `callbacks` and `dart_async` fixtures are clippy-clean with
 `-D warnings` on Rust 1.85.0 and on stable. #186's generated probe passes in JIT
@@ -147,7 +186,8 @@ and AOT on both commits, and the first commit alone passes the companion's unit
 tests and the JIT probe. The companion was built on Rust 1.85.0, since 1.85.1
 wasn't installed.
 
-On Android, the same branch ported to UniFFI 0.29 passes all 180 device cases,
+On Android, the same branch ported to UniFFI 0.29, before the last two commits,
+passes all 180 device cases,
 in one release AOT build with every fixture's relay library cross-compiled and
 bundled. It passes both on an arm64 emulator (API 36) and on a 32-bit-only
 Galaxy A13 (API 34, Firebase Test Lab). That includes the `callback-relay`
