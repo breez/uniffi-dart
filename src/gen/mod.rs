@@ -285,14 +285,15 @@ impl BindingGenerator for DartBindingGenerator {
             dispatch::validate(&components[0].ci)?;
             dispatch::write_native(&components[0].ci, &components[0].config, &settings.out_dir)?;
         }
-        // Outside dispatch mode, every component with callbacks goes through
-        // the relay companion when it's bundled. One companion serves all the
-        // components, which share one cdylib and asset id.
+        // Outside dispatch mode, every component with callbacks or objects
+        // goes through the relay companion when it's bundled: callbacks are
+        // relayed, and objects are freed by NativeFinalizers. One companion
+        // serves all the components, which share one cdylib and asset id.
         let relayed: Vec<_> = components.iter().map(|c| (&c.ci, &c.config)).collect();
         let relay_runtime = match components.first() {
             Some(first)
                 if !first.config.callback_dispatch
-                    && components.iter().any(|c| dispatch::relay::has_callbacks(&c.ci)) =>
+                    && components.iter().any(|c| dispatch::relay::needs_companion(&c.ci)) =>
             {
                 dispatch::relay::write_relay(&relayed, &first.config, &settings.out_dir)?;
                 let hash = dispatch::relay::abi_hash(&relayed)?;

@@ -11,7 +11,8 @@
 //! exited, calls that return nothing and can't throw are dropped as if they
 //! had succeeded, and other calls fail or complete with an unexpected error.
 //! The companion also carries the wake-ups of Rust futures that Dart awaits,
-//! so a future that outlives its isolate doesn't call into it.
+//! so a future that outlives its isolate doesn't call into it, and frees Rust
+//! objects for the bindings' NativeFinalizers on its own thread.
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -63,6 +64,12 @@ pub fn has_callbacks(ci: &ComponentInterface) -> bool {
     !callback_types(ci).is_empty()
 }
 
+/// Whether `ci` uses the companion: for its callbacks, or to free its
+/// objects from NativeFinalizers.
+pub fn needs_companion(ci: &ComponentInterface) -> bool {
+    has_callbacks(ci) || !ci.object_definitions().is_empty()
+}
+
 pub fn delivery(field: &str, methods: &[Method]) -> Result<Delivery> {
     Ok(match field {
         "uniffi_free" => Delivery::Free,
@@ -101,6 +108,17 @@ pub fn probe_symbol(config: &Config) -> String {
 /// Symbol of the function that installs a callback type's proxy vtable.
 pub fn install_symbol(namespace: &str, callback_name: &str) -> String {
     format!("uniffi_relay_{namespace}_install_{callback_name}")
+}
+
+/// Symbol of the function that gives the companion an object type's UniFFI
+/// free function.
+pub fn set_free_symbol(namespace: &str, object_name: &str) -> String {
+    format!("uniffi_relay_{namespace}_set_free_{object_name}")
+}
+
+/// Symbol of an object type's NativeFinalizer callback.
+pub fn finalize_symbol(namespace: &str, object_name: &str) -> String {
+    format!("uniffi_relay_{namespace}_finalize_{object_name}")
 }
 
 fn vtable_name(callback_name: &str) -> String {
@@ -176,6 +194,22 @@ impl<'a> Component<'a> {
         Ok(out)
     }
 
+    /// Each object type and the native type of its free function's first
+    /// argument, the object's pointer or handle.
+    fn frees(&self) -> Result<Vec<(String, String)>> {
+        self.ci
+            .object_definitions()
+            .iter()
+            .map(|obj| {
+                let free = obj.ffi_object_free();
+                let Some(arg) = free.arguments().first().map(|arg| arg.type_()) else {
+                    bail!("the free function of `{}` takes no object", obj.name())
+                };
+                Ok((obj.name().to_owned(), native_type(&arg)))
+            })
+            .collect()
+    }
+
     fn canonical(&self, out: &mut String) -> Result<()> {
         writeln!(out, "component {}", self.namespace())?;
         for (name, cb) in &self.callbacks {
@@ -197,6 +231,9 @@ impl<'a> Component<'a> {
             for slot in vtable.slots {
                 writeln!(out, "  {}: {:?}", slot.field, slot.delivery)?;
             }
+        }
+        for (name, arg) in self.frees()? {
+            writeln!(out, "finalize {}: {arg}", finalize_symbol(self.namespace(), &name))?;
         }
         Ok(())
     }
@@ -222,7 +259,48 @@ impl<'a> Component<'a> {
         for vtable in self.vtables()? {
             self.write_vtable(source, &vtable)?;
         }
+        for (name, arg) in self.frees()? {
+            self.write_free(source, &name, &arg)?;
+        }
         writeln!(source, "}}")?;
+        Ok(())
+    }
+
+    /// An object type's NativeFinalizer callback, which only queues the
+    /// object for the free thread, and the function that registers the
+    /// type's UniFFI free. The companion doesn't link the original library,
+    /// so the bindings pass the free's address in.
+    fn write_free(&self, source: &mut String, name: &str, arg: &str) -> Result<()> {
+        let ns = self.namespace();
+        writeln!(
+            source,
+            "static FREE_{name}: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+type Free{name} = unsafe extern \"C\" fn({arg}, *mut RustCallStatus);
+unsafe fn free_{name}(token: usize) {{
+    let free = FREE_{name}.load(Ordering::Acquire);
+    if free != 0 {{
+        let free = std::mem::transmute::<usize, Free{name}>(free);
+        let mut status: RustCallStatus = std::mem::zeroed();
+        free(token as {arg}, &mut status);
+    }}
+}}
+#[no_mangle]
+/// # Safety
+/// `free` must be the UniFFI free function of `{name}`.
+pub unsafe extern \"C\" fn {}(free: Free{name}) {{
+    FREE_{name}.store(free as usize, Ordering::Release);
+    reaper();
+}}
+#[no_mangle]
+/// # Safety
+/// `token` must be a `{name}` that Dart owns and no longer uses.
+pub unsafe extern \"C\" fn {}(token: *mut c_void) {{
+    reap(token as usize, free_{name});
+}}",
+            set_free_symbol(ns, name),
+            finalize_symbol(ns, name)
+        )?;
         Ok(())
     }
 
@@ -386,7 +464,7 @@ pub unsafe extern \"C\" fn {}(ep: u64, inline: *const {vtable}) -> *const {vtabl
 /// with the bundled companion's, so a stale companion fails loudly.
 pub fn abi_hash(components: &[(&ComponentInterface, &Config)]) -> Result<u64> {
     let mut canonical = format!("relay-v1\n{CORE_RUNTIME}");
-    for (ci, _) in components.iter().filter(|(ci, _)| has_callbacks(ci)) {
+    for (ci, _) in components.iter().filter(|(ci, _)| needs_companion(ci)) {
         Component::new(ci).canonical(&mut canonical)?;
     }
     Ok(fnv1a64(canonical.as_bytes()))
@@ -405,7 +483,7 @@ pub fn write_relay(
         probe_symbol(config),
         abi_hash(components)?
     )?;
-    for (ci, _) in components.iter().filter(|(ci, _)| has_callbacks(ci)) {
+    for (ci, _) in components.iter().filter(|(ci, _)| needs_companion(ci)) {
         Component::new(ci).write(&mut source)?;
     }
     let dir = out.join("uniffi_dispatch");
@@ -421,7 +499,7 @@ pub fn write_relay(
     std::fs::write(
         dir.join("README.md"),
         format!(
-            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread, and so that an async Rust call that outlives its Dart isolate, for example across a hot restart, finishes without crashing. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
+            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread, so that an async Rust call that outlives its Dart isolate, for example across a hot restart, finishes without crashing, and so that the Rust objects of an exited isolate are freed. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
             asset_id(config)
         ),
     )?;
@@ -561,6 +639,23 @@ mod tests {
         ] {
             assert_ne!(hash(base), hash(changed), "hash unchanged for {changed}");
         }
+    }
+
+    #[test]
+    fn objects_need_the_companion_and_change_its_hash() {
+        let config = Config::default();
+        let hash = |udl: &str| {
+            let ci = component(udl);
+            abi_hash(&[(&ci, &config)]).unwrap()
+        };
+        let objects = component("namespace test {}; interface Thing { constructor(); };");
+        assert!(needs_companion(&objects));
+        assert!(!has_callbacks(&objects));
+        assert!(!needs_companion(&component("namespace test { u32 value(); };")));
+        assert_ne!(
+            hash("namespace test {}; interface Thing { constructor(); };"),
+            hash("namespace test {}; interface Other { constructor(); };")
+        );
     }
 
     #[test]

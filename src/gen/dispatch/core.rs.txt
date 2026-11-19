@@ -520,6 +520,36 @@ impl<V: Copy> Slots<V> {
         (ep.clone(), *inline)
     }
 }
+/// An object that a NativeFinalizer handed over, and its type's free.
+struct Reap {
+    token: usize,
+    free: unsafe fn(usize),
+}
+static REAPER: OnceLock<mpsc::Sender<Reap>> = OnceLock::new();
+/// The thread that frees Rust objects for the bindings' NativeFinalizers,
+/// started when the first object type registers its free. A finalizer
+/// callback runs during garbage collection or isolate group shutdown, on any
+/// thread, and must not call into the Dart VM. An object's Drop can, for
+/// example by releasing a Dart callback, which posts to its isolate. So the
+/// callback only queues the object, and this thread frees it, as Kotlin's
+/// Cleaner thread does.
+fn reaper() -> &'static mpsc::Sender<Reap> {
+    REAPER.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Reap>();
+        std::thread::Builder::new()
+            .name("uniffi-dart-free".into())
+            .spawn(move || {
+                for reap in rx {
+                    unsafe { (reap.free)(reap.token) };
+                }
+            })
+            .expect("uniffi-dart free thread");
+        tx
+    })
+}
+fn reap(token: usize, free: unsafe fn(usize)) {
+    let _ = reaper().send(Reap { token, free });
+}
 /// Checks every endpoint for an exited isolate, so jobs queued to it complete
 /// with an error instead of waiting forever. Called when a vtable is installed,
 /// which a new isolate does after a hot restart.

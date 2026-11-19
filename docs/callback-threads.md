@@ -23,8 +23,10 @@ synchronous callback from another thread.
 
 ## The callback relay library
 
-Whenever a component has callback interfaces or foreign traits, generation also
-writes a Rust crate to `uniffi_dispatch/`, next to the Dart files. It uses only
+Whenever a component has callback interfaces, foreign traits or objects,
+generation also writes a Rust crate to `uniffi_dispatch/`, next to the Dart
+files. Besides relaying callbacks, it frees Rust objects for the bindings (see
+[Freeing Rust objects](#freeing-rust-objects)). It uses only
 the Rust standard library and builds with Rust 1.85 or later. Its generated
 `README.md` records the two names you need:
 
@@ -68,7 +70,7 @@ so rebuild the library whenever you regenerate the bindings.
 ### Without the library
 
 If the asset isn't bundled, the bindings work as they did before, except that
-async methods and frees use listeners. The first time a component that has
+async methods and frees use listeners, and a `Finalizer` frees Rust objects. The first time a component that has
 synchronous callback methods sets up a vtable, it prints one warning per
 isolate, naming those methods and the missing asset.
 
@@ -184,6 +186,20 @@ process with `Callback invoked after it has been deleted`. That includes the
 wake-up of an async Rust function that was still running when its isolate was
 replaced or killed. Release Rust-held callbacks and let async Rust calls finish
 before a hot restart, for example by disconnecting, or use a full restart.
+
+### Freeing Rust objects
+
+A Rust object that Dart holds is freed by `dispose()`, or once its Dart object
+is unreachable. With the relay library, a `NativeFinalizer` hands it to the
+relay's free thread. That also happens after the object's isolate has exited,
+when the VM collects the isolate's objects or shuts down its isolate group, as
+in a hot restart. So the old isolate's objects are released, and a Rust object
+that stops its own work when dropped stops too. The free runs on that thread,
+not in the finalizer, because a finalizer must not call into the Dart VM and an
+object's `Drop` can, for example by releasing a Dart callback.
+
+Without the relay library, a `Finalizer` frees the object on its isolate's
+event loop, and the objects of an exited isolate are never freed.
 
 ## Deadlocks
 

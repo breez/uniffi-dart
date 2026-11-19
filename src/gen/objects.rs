@@ -11,6 +11,7 @@ use crate::gen::callback_interface::{
     callback_impl_class, generate_callback_functions, generate_callback_interface,
     generate_callback_interface_vtable_init_function, generate_callback_vtable_interface,
 };
+use crate::gen::dispatch::relay;
 use crate::gen::oracle::{AsCodeType, DartCodeOracle};
 use crate::gen::render::{AsRenderable, Renderable, TypeHelperRenderer};
 use crate::gen::CodeType;
@@ -222,6 +223,8 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
     if !obj.is_trait_interface() {
         implements.push(interface_name.clone());
     }
+    // A NativeFinalizer can only watch a Finalizable.
+    implements.push("Finalizable".to_string());
     if is_error_interface && !implements.iter().any(|entry| entry == "Exception") {
         implements.push("Exception".to_string());
     }
@@ -259,13 +262,13 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
         };
 
     let trait_methods = generate_trait_helpers(obj, type_helper);
+    let (finalizer_externals, finalizer) = object_finalizer(obj, type_helper);
 
     quote! {
         $interface_definition
 
-        final _$finalizer_cls_name = Finalizer<Pointer<Void>>((ptr) {
-          rustCall((status) => $ffi_object_free_name(ptr, status));
-        });
+        $finalizer_externals
+        final _$finalizer_cls_name = $finalizer;
 
         class $cls_name $implements_clause {
             late final Pointer<Void> _ptr;
@@ -365,16 +368,17 @@ fn generate_callback_trait_rust_impl(
         .into_iter()
         .map(|method| generate_callback_trait_rust_method(method, type_helper));
 
+    let (finalizer_externals, finalizer) = object_finalizer(obj, type_helper);
+
     quote! {
-        final class $(&impl_name) implements $cls_name {
+        $finalizer_externals
+
+        final class $(&impl_name) implements $cls_name, Finalizable {
             $(&impl_name)._internal(this._ptr) {
                 $(&finalizer_field).attach(this, _ptr, detach: this);
             }
 
-            static final Finalizer<Pointer<Void>> $(&finalizer_field) =
-                Finalizer<Pointer<Void>>((ptr) {
-                    rustCall((status) => $ffi_object_free_name(ptr, status));
-                });
+            static final UniffiObjectFinalizer $(&finalizer_field) = $finalizer;
 
             final Pointer<Void> _ptr;
             bool _uniffiDisposed = false;
@@ -708,6 +712,7 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
 
     let ffi_object_free_name = obj.ffi_object_free().name();
     let ffi_object_clone_name = obj.ffi_object_clone().name();
+    let (finalizer_externals, finalizer) = object_finalizer(obj, type_helper);
 
     let abstract_methods =
         obj.methods().into_iter().map(|method| generate_interface_method(method, type_helper));
@@ -768,15 +773,14 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
             }
         }
 
-        final class $(&impl_name) implements $cls_name {
+        $finalizer_externals
+
+        final class $(&impl_name) implements $cls_name, Finalizable {
             $(&impl_name)._internal(this._ptr) {
                 $(&finalizer_field).attach(this, _ptr, detach: this);
             }
 
-            static final Finalizer<Pointer<Void>> $(&finalizer_field) =
-                Finalizer<Pointer<Void>>((ptr) {
-                    rustCall((status) => $ffi_object_free_name(ptr, status));
-                });
+            static final UniffiObjectFinalizer $(&finalizer_field) = $finalizer;
 
             final Pointer<Void> _ptr;
             bool _uniffiDisposed = false;
@@ -814,6 +818,52 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
             $(for method in concrete_methods => $method)
         }
     }
+}
+
+/// The object type's finalizer, and the relay functions it needs, to declare
+/// at the top level. It frees through the type's UniFFI free: from the relay's
+/// free thread when the relay is bundled, so it also runs after the object's
+/// isolate has exited, and otherwise on the isolate's event loop.
+fn object_finalizer(
+    obj: &Object,
+    type_helper: &dyn TypeHelperRenderer,
+) -> (dart::Tokens, dart::Tokens) {
+    let free = obj.ffi_object_free().name().to_owned();
+    let fallback = quote!((ptr) {
+        rustCall((status) => $(&free)(ptr, status));
+    });
+    // Dispatch mode's companion has no free thread.
+    if type_helper.callback_dispatch() {
+        return (quote!(), quote!(UniffiObjectFinalizer($fallback, () => null)));
+    }
+    let ns = type_helper.get_ci().namespace();
+    let cls_name = DartCodeOracle::class_name(obj.name());
+    let set_free = &format!("_uniffiRelaySetFree{cls_name}");
+    let finalize = &format!("_uniffiRelayFinalize{cls_name}");
+    let free_type = &quote!(Void Function(Pointer<Void>, Pointer<RustCallStatus>));
+    let externals = quote! {
+        @Native<Void Function(Pointer<NativeFunction<$free_type>>)>(
+            assetId: uniffiCallbackRelayAsset,
+            symbol: $(quoted(relay::set_free_symbol(ns, obj.name()))),
+        )
+        external void $set_free(Pointer<NativeFunction<$free_type>> free);
+
+        @Native<Void Function(Pointer<Void>)>(
+            assetId: uniffiCallbackRelayAsset,
+            symbol: $(quoted(relay::finalize_symbol(ns, obj.name()))),
+        )
+        external void $finalize(Pointer<Void> token);
+    };
+    let finalizer = quote! {
+        UniffiObjectFinalizer(
+            $fallback,
+            () => uniffiRelayObjectFinalizer(
+                () => $set_free(Native.addressOf<NativeFunction<$free_type>>($(&free))),
+                () => Native.addressOf<NativeFinalizerFunction>($finalize),
+            ),
+        )
+    };
+    (externals, finalizer)
 }
 
 fn generate_object_interface(

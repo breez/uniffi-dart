@@ -779,6 +779,42 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
             }
 
             $(doc_comment(&[
+                "Frees a Rust object once its Dart object is unreachable.",
+                "",
+                "With the callback relay bundled, a `NativeFinalizer` hands the object",
+                "to the relay's free thread. It also runs after the object's isolate",
+                "has exited, for example in a hot restart, which a `Finalizer` never",
+                "does, so the Rust objects of an exited isolate are freed too. Without",
+                "the relay, a `Finalizer` frees the object on this isolate's event loop.",
+            ]))
+            final class UniffiObjectFinalizer {
+                UniffiObjectFinalizer(this._free, NativeFinalizer? Function() native)
+                    : _native = native();
+
+                final void Function(Pointer<Void>) _free;
+                final NativeFinalizer? _native;
+                late final Finalizer<Pointer<Void>> _fallback = Finalizer<Pointer<Void>>(_free);
+
+                void attach(Finalizable value, Pointer<Void> ptr, {required Object detach}) {
+                    final native = _native;
+                    if (native != null) {
+                        native.attach(value, ptr, detach: detach);
+                    } else {
+                        _fallback.attach(value, ptr, detach: detach);
+                    }
+                }
+
+                void detach(Object detach) {
+                    final native = _native;
+                    if (native != null) {
+                        native.detach(detach);
+                    } else {
+                        _fallback.detach(detach);
+                    }
+                }
+            }
+
+            $(doc_comment(&[
                 "Completes once this isolate has run every callback that Rust queued to",
                 "it before this call.",
                 "",
