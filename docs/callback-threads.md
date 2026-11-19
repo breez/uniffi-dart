@@ -134,11 +134,12 @@ loaded, together with every callback object and vtable that Rust holds. The
 same happens when an isolate from `Isolate.run` or `compute` exits while Rust
 still holds its callbacks.
 
-With the relay library, calls for an isolate that has exited fail instead of
-crashing. A synchronous call returns an unexpected error to Rust, which for a
-method without an error type usually means a panic on that Rust thread. An
-async call completes with an unexpected error, and a synchronous call that
-returns nothing is dropped. The relay logs one warning. After a hot restart,
+With the relay library, calls for an isolate that has exited don't crash. A
+call to a method that returns nothing and can't throw, sync or async, is
+dropped as if it had succeeded. Any other call fails with an unexpected error:
+a synchronous call returns one to Rust, and an async call completes with one.
+For a method without an error type, UniFFI turns that error into a panic on
+the calling Rust thread. The relay logs one warning. After a hot restart,
 the new isolate takes over each callback type the first time it passes a
 callback of that type to Rust. Handles carry a random per-isolate prefix on
 64-bit targets, so a handle from the old isolate misses in the new isolate

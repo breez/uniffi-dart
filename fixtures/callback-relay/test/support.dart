@@ -71,4 +71,7 @@ class DartKeeper implements Keeper {
 
   @override
   Future<int> valueLater() async => current;
+
+  @override
+  Future<void> noteLater(int value) async => notes.add(value);
 }
