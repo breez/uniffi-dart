@@ -1,10 +1,10 @@
 //! Rust calls Dart callbacks from threads other than Dart's: `std::thread`
-//! workers and tokio tasks. Built with `callback_listeners = true`, so async
-//! methods, fire-and-forget sync methods and `uniffi_free` are delivered through
-//! `NativeCallable.listener`. With `Pointer.fromFunction` each of these calls
-//! aborts the Dart VM ("Cannot invoke native callback outside an isolate").
+//! workers and tokio tasks. Async methods and `uniffi_free` are delivered
+//! through `NativeCallable.listener`, which any thread may call. With
+//! `Pointer.fromFunction` each of these calls aborts the Dart VM ("Cannot
+//! invoke native callback outside an isolate").
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -134,6 +134,57 @@ pub async fn store_roundtrip_on_tokio(
 #[uniffi::export]
 pub fn read_store_name(store: Arc<dyn Store>) -> String {
     store.name()
+}
+
+/// Like the SDK's `Logger` and `EventListener`: methods that return nothing and
+/// can't fail, plus one that returns a value. Only the stale-handle case uses
+/// it, so no other case installs its vtable.
+#[uniffi::export(callback_interface)]
+#[async_trait::async_trait]
+pub trait Notifier: Send + Sync {
+    fn notify(&self, message: String);
+    async fn notify_later(&self, message: String);
+    fn count(&self) -> u32;
+}
+
+static HELD_NOTIFIER: Mutex<Option<Arc<dyn Notifier>>> = Mutex::new(None);
+
+fn held_notifier() -> Arc<dyn Notifier> {
+    HELD_NOTIFIER.lock().unwrap().clone().expect("a held notifier")
+}
+
+/// Keeps the notifier for the life of the process, as the SDK keeps a logger.
+#[uniffi::export]
+pub fn hold_notifier(notifier: Box<dyn Notifier>) {
+    *HELD_NOTIFIER.lock().unwrap() = Some(Arc::from(notifier));
+}
+
+#[uniffi::export]
+pub fn release_notifier() {
+    HELD_NOTIFIER.lock().unwrap().take();
+}
+
+#[uniffi::export]
+pub fn notify_with(notifier: Box<dyn Notifier>, message: String) {
+    notifier.notify(message);
+}
+
+#[uniffi::export]
+pub fn notify_held(message: String) {
+    held_notifier().notify(message);
+}
+
+/// Returns false if the call panicked, as UniFFI does when a callback without
+/// an error type reports an unexpected error.
+#[uniffi::export]
+pub async fn notify_held_later_on_tokio(message: String) -> bool {
+    let notifier = held_notifier();
+    runtime().spawn(async move { notifier.notify_later(message).await }).await.is_ok()
+}
+
+#[uniffi::export]
+pub fn count_held() -> u32 {
+    held_notifier().count()
 }
 
 uniffi::include_scaffolding!("api");
