@@ -140,8 +140,8 @@ fn warn_dropped() {
     warn_once(
         &DROP_WARNED,
         "dropped a callback because the Dart isolate that registered it has exited, for \
-         example after a hot restart. Synchronous calls fail with an unexpected error, and \
-         async calls complete with one.",
+         example after a hot restart. Calls that return nothing and can't throw are dropped \
+         as if they had succeeded. Other calls fail with an unexpected error.",
     );
 }
 fn warn_failed() {
