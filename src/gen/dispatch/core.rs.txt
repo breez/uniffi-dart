@@ -70,6 +70,10 @@ fn abandon_all(jobs: impl IntoIterator<Item = Job>) {
 }
 type CurrentIsolate = unsafe extern "C" fn() -> *mut c_void;
 type PostCObject = unsafe extern "C" fn(i64, *mut DartCObject) -> bool;
+type MainPortId = unsafe extern "C" fn() -> i64;
+/// `Dart_GetMainPortId`, when the VM provides it. There is one Dart VM per
+/// process.
+static MAIN_PORT_ID: OnceLock<MainPortId> = OnceLock::new();
 #[repr(C)]
 struct DartApiEntry {
     name: *const c_char,
@@ -181,6 +185,7 @@ struct Endpoint {
     post: PostCObject,
     current_isolate: Option<CurrentIsolate>,
     owner_isolate: usize,
+    owner_main_port: i64,
     state: Mutex<State>,
     ready: Condvar,
     vtables: Mutex<HashMap<&'static str, Box<dyn Any + Send + Sync>>>,
@@ -296,12 +301,16 @@ impl Endpoint {
         }
     }
     /// True on the owning isolate's thread: while it drains or pumps this
-    /// endpoint, or whenever the VM reports that isolate as current.
+    /// endpoint, or whenever the VM reports that isolate as current. A new
+    /// isolate can reuse an exited one's address, for example after a hot
+    /// restart, but not its main port, so that is compared too when the VM
+    /// provides it.
     fn on_owner_thread(&self) -> bool {
         OWNERS.with(|owners| owners.borrow().last() == Some(&self.id))
-            || self
-                .current_isolate
-                .is_some_and(|current| unsafe { current() as usize == self.owner_isolate })
+            || self.current_isolate.is_some_and(|current| unsafe {
+                current() as usize == self.owner_isolate
+                    && MAIN_PORT_ID.get().is_none_or(|main_port| main_port() == self.owner_main_port)
+            })
     }
     fn vtable<T: Clone + 'static>(&self, name: &'static str) -> T {
         self.vtables.lock().unwrap().get(name).unwrap().downcast_ref::<T>().unwrap().clone()
@@ -389,13 +398,22 @@ unsafe extern "C" fn uniffi_dispatch_create(port: i64, data: *const DartApi) -> 
     if owner_isolate == 0 {
         return 0;
     }
-    create_endpoint(port, post, Some(current), owner_isolate)
+    let owner_main_port = match dart_api_function(data, b"Dart_GetMainPortId") {
+        Some(main_port) => {
+            let main_port = std::mem::transmute::<*const (), MainPortId>(main_port);
+            let _ = MAIN_PORT_ID.set(main_port);
+            main_port()
+        }
+        None => 0,
+    };
+    create_endpoint(port, post, Some(current), owner_isolate, owner_main_port)
 }
 fn create_endpoint(
     port: i64,
     post: PostCObject,
     current_isolate: Option<CurrentIsolate>,
     owner_isolate: usize,
+    owner_main_port: i64,
 ) -> u64 {
     let id = next_id();
     endpoints().lock().unwrap().insert(
@@ -406,6 +424,7 @@ fn create_endpoint(
             post,
             current_isolate,
             owner_isolate,
+            owner_main_port,
             state: Mutex::new(State::default()),
             ready: Condvar::new(),
             vtables: Mutex::new(HashMap::new()),

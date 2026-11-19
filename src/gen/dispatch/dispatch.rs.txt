@@ -82,7 +82,7 @@ mod tests {
     }
     #[test]
     fn close_waits_for_pending_notification() {
-        let id = create_endpoint(0, alive, None, 0);
+        let id = create_endpoint(0, alive, None, 0, 0);
         let ep = endpoint(id);
         ep.push(Job::new(|| {}));
         assert!(!uniffi_dispatch_close(id));
@@ -92,8 +92,8 @@ mod tests {
     }
     #[test]
     fn close_keeps_other_isolates_routes_alive() {
-        let first = create_endpoint(0, alive, None, 0);
-        let second = create_endpoint(0, alive, None, 0);
+        let first = create_endpoint(0, alive, None, 0, 0);
+        let second = create_endpoint(0, alive, None, 0, 0);
         let handle = register(second, 1, "test");
         assert!(uniffi_dispatch_close(first));
         assert!(!uniffi_dispatch_close(second));
@@ -103,7 +103,7 @@ mod tests {
     }
     #[test]
     fn close_waits_for_active_call() {
-        let id = create_endpoint(0, alive, None, 0);
+        let id = create_endpoint(0, alive, None, 0, 0);
         let ep = endpoint(id);
         ep.enter(false);
         assert!(!uniffi_dispatch_close(id));
@@ -115,7 +115,7 @@ mod tests {
         unsafe extern "C" fn current() -> *mut c_void {
             7usize as *mut _
         }
-        let id = create_endpoint(0, alive, Some(current), 7);
+        let id = create_endpoint(0, alive, Some(current), 7, 0);
         assert_eq!(dispatch(&endpoint(id), || 42), Some(42));
         assert!(uniffi_dispatch_close(id));
     }
@@ -128,7 +128,7 @@ mod tests {
             }
         }
         thread_local! { static ON_EXIT: std::cell::RefCell<Option<OnExit>> = const { std::cell::RefCell::new(None) }; }
-        let id = create_endpoint(0, alive, None, 0);
+        let id = create_endpoint(0, alive, None, 0, 0);
         let ep = endpoint(id);
         assert_eq!(
             run(id, move || {
@@ -142,7 +142,7 @@ mod tests {
     }
     #[test]
     fn exited_owner_fails_sync_calls_and_abandons_queued_ones() {
-        let id = create_endpoint(0, exited, None, 0);
+        let id = create_endpoint(0, exited, None, 0, 0);
         let ep = endpoint(id);
         assert_eq!(dispatch(&ep, || 42), None);
         let (tx, rx) = mpsc::channel();
@@ -156,7 +156,7 @@ mod tests {
         unsafe extern "C" fn post(_: i64, _: *mut DartCObject) -> bool {
             ALIVE.load(Ordering::SeqCst)
         }
-        let id = create_endpoint(0, post, None, 0);
+        let id = create_endpoint(0, post, None, 0, 0);
         let ep = endpoint(id);
         let (tx, rx) = mpsc::channel();
         let first = tx.clone();
