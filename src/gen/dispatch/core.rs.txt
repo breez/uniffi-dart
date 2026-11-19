@@ -81,12 +81,21 @@ struct DartApi {
     minor: i32,
     functions: *const DartApiEntry,
 }
-/// A `Dart_CObject` holding `null` (`Dart_CObject_kNull`). The value array is at
-/// least as large as the C union, so the VM never reads past it.
+/// A `Dart_CObject` holding `null` (`Dart_CObject_kNull`) or an integer
+/// (`Dart_CObject_kInt64`). The value array is at least as large as the C
+/// union, so the VM never reads past it.
 #[repr(C)]
 struct DartCObject {
     kind: i32,
     value: [u64; 5],
+}
+impl DartCObject {
+    fn null() -> Self {
+        Self { kind: 0, value: [0; 5] }
+    }
+    fn int64(value: i64) -> Self {
+        Self { kind: 3, value: [value as u64, 0, 0, 0, 0] }
+    }
 }
 unsafe fn dart_api_function(data: *const DartApi, name: &[u8]) -> Option<*const ()> {
     if data.is_null() || (*data).major != 2 {
@@ -140,8 +149,8 @@ fn warn_dropped() {
     warn_once(
         &DROP_WARNED,
         "dropped a callback because the Dart isolate that registered it has exited, for \
-         example after a hot restart. Synchronous calls fail with an unexpected error, and \
-         async calls complete with one.",
+         example after a hot restart. Calls that return nothing and can't throw are dropped \
+         as if they had succeeded. Other calls fail with an unexpected error.",
     );
 }
 fn warn_failed() {
@@ -177,21 +186,39 @@ struct Endpoint {
     vtables: Mutex<HashMap<&'static str, Box<dyn Any + Send + Sync>>>,
 }
 impl Endpoint {
-    /// Posts `null` to the owner's port, which runs `uniffi_dispatch_drain`
-    /// there. A failed post means the isolate has exited: the endpoint dies and
-    /// returns its queued jobs for abandoning outside the lock.
-    fn wake(&self, state: &mut State) -> Vec<Job> {
+    /// Posts `message` to the owner's port. A failed post means the isolate
+    /// has exited: the endpoint dies and returns its queued jobs for
+    /// abandoning outside the lock.
+    fn post(&self, state: &mut State, mut message: DartCObject) -> Result<(), Vec<Job>> {
         if state.dead {
-            return Vec::new();
+            return Err(Vec::new());
         }
-        let mut message = DartCObject { kind: 0, value: [0; 5] };
         if unsafe { (self.post)(self.port, &mut message) } {
-            state.notified = true;
-            Vec::new()
+            Ok(())
         } else {
             state.dead = true;
-            state.jobs.drain(..).collect()
+            Err(state.jobs.drain(..).collect())
         }
+    }
+    /// Posts `null` to the owner's port, which runs `uniffi_dispatch_drain`
+    /// there, and returns the jobs to abandon if the owner has exited.
+    fn wake(&self, state: &mut State) -> Vec<Job> {
+        match self.post(state, DartCObject::null()) {
+            Ok(()) => {
+                state.notified = true;
+                Vec::new()
+            }
+            Err(abandoned) => abandoned,
+        }
+    }
+    /// Posts a Rust future's wake-up to the owner as an integer. It is dropped
+    /// if the owner has exited.
+    fn resume(&self, message: i64) {
+        let abandoned = {
+            let mut s = self.state.lock().unwrap();
+            self.post(&mut s, DartCObject::int64(message)).err().unwrap_or_default()
+        };
+        abandon_all(abandoned);
     }
     /// Queues a job and wakes the owner for it. While the owner is draining or
     /// pumping it will see the job anyway, and it is alive. Otherwise every
@@ -408,6 +435,20 @@ pub extern "C" fn uniffi_dispatch_pending(id: u64) -> bool {
     };
     let pending = !ep.state.lock().unwrap().jobs.is_empty();
     pending
+}
+/// The continuation the bindings give a Rust future when they poll it, in
+/// place of a `NativeCallable.listener`. Rust may call it from any thread,
+/// including after the polling isolate has exited, for example in a hot
+/// restart, when calling a listener would crash. `data` holds the isolate's
+/// endpoint in its upper 32 bits and the isolate's id for the future in its
+/// lower 32. The wake-up is posted to the isolate's port as `id << 8 |
+/// poll_result`, and dropped if the isolate has exited.
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_continue(data: u64, poll_result: i8) {
+    let Some(ep) = endpoints().lock().unwrap().get(&(data >> 32)).cloned() else {
+        return;
+    };
+    ep.resume((((data & 0xffff_ffff) << 8) | u64::from(poll_result as u8)) as i64);
 }
 /// Checks every endpoint for an exited isolate, so jobs queued to it complete
 /// with an error instead of waiting forever. Called when a vtable is installed,

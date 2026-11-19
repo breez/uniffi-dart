@@ -68,6 +68,7 @@ pub trait Keeper: Send + Sync {
     fn note(&self, value: u32);
     fn value(&self) -> u32;
     async fn value_later(&self) -> u32;
+    async fn note_later(&self, value: u32);
 }
 
 #[uniffi::export]
@@ -178,10 +179,25 @@ pub async fn kept_value_from_thread() -> Option<u32> {
     on_thread(move || keeper.value()).await
 }
 
+/// Returns false if the call panicked.
 #[uniffi::export]
-pub async fn kept_note_from_thread(value: u32) {
+pub async fn kept_note_from_thread(value: u32) -> bool {
     let keeper = kept();
-    on_thread(move || keeper.note(value)).await;
+    on_thread(move || keeper.note(value)).await.is_some()
+}
+
+/// Returns false if the call panicked, as UniFFI does when an async callback
+/// without an error type completes with an unexpected error.
+#[uniffi::export]
+pub async fn kept_note_later_from_tokio(value: u32) -> bool {
+    let keeper = kept();
+    runtime().spawn(async move { keeper.note_later(value).await }).await.is_ok()
+}
+
+/// Calls `note` on this thread, which installs the vtable in this isolate.
+#[uniffi::export]
+pub fn note_with(keeper: Box<dyn Keeper>, value: u32) {
+    keeper.note(value);
 }
 
 /// Returns `None` if the call completed with an error.
@@ -189,6 +205,19 @@ pub async fn kept_note_from_thread(value: u32) {
 pub async fn kept_value_later_from_tokio() -> Option<u32> {
     let keeper = kept();
     runtime().spawn(async move { keeper.value_later().await }).await.ok()
+}
+
+/// Finishes after `ms` milliseconds on a tokio worker, which wakes the
+/// caller's continuation from that thread.
+#[uniffi::export]
+pub async fn finish_later(ms: u32) -> u32 {
+    runtime()
+        .spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(ms.into())).await;
+            ms
+        })
+        .await
+        .expect("tokio task")
 }
 
 uniffi::include_scaffolding!("api");

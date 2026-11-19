@@ -6,7 +6,10 @@
 //! would. From any other thread it queues the call to the isolate and wakes
 //! it through a port: calls that return nothing don't wait, and calls that
 //! return something block until the isolate has run them. If the isolate has
-//! exited, calls fail or complete with an unexpected error instead.
+//! exited, calls that return nothing and can't throw are dropped as if they
+//! had succeeded, and other calls fail or complete with an unexpected error.
+//! The companion also carries the wake-ups of Rust futures that Dart awaits,
+//! so a future that outlives its isolate doesn't call into it.
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -16,6 +19,7 @@ use uniffi_bindgen::interface::{FfiCallbackFunction, FfiDefinition, FfiStruct, F
 use uniffi_bindgen::ComponentInterface;
 
 use super::{fnv1a64, native_type, result_type, CORE_RUNTIME};
+use crate::gen::callback_interface::droppable;
 use crate::gen::Config;
 
 /// How a proxy delivers calls made off the owning isolate's thread.
@@ -26,8 +30,14 @@ pub enum Delivery {
     Wait,
     /// A sync method that returns nothing and can't throw: queued.
     Void,
-    /// An async method: queued, completing through Rust's callback.
+    /// An async method that returns a value or can throw: queued, completing
+    /// through Rust's callback. If the isolate has gone, it completes with an
+    /// unexpected error.
     Async,
+    /// An async method that returns nothing and can't throw: queued like
+    /// `Async`. If the isolate has gone, it completes successfully, since an
+    /// unexpected error would only make Rust panic.
+    AsyncVoid,
     /// `uniffi_free`: queued.
     Free,
 }
@@ -59,12 +69,11 @@ pub fn delivery(field: &str, methods: &[Method]) -> Result<Delivery> {
             let Some(m) = methods.iter().find(|m| m.name() == name) else {
                 bail!("no callback method for vtable field `{name}`")
             };
-            if m.is_async() {
-                Delivery::Async
-            } else if m.return_type().is_none() && m.throws_type().is_none() {
-                Delivery::Void
-            } else {
-                Delivery::Wait
+            match (m.is_async(), droppable(m)) {
+                (true, true) => Delivery::AsyncVoid,
+                (true, false) => Delivery::Async,
+                (false, true) => Delivery::Void,
+                (false, false) => Delivery::Wait,
             }
         }
     })
@@ -298,7 +307,7 @@ fn slot_{name}() -> Arc<Slot{name}> {{
                         "    ep.push(Job::with_abandon(move || unsafe {{ f(a0) }}, warn_dropped));"
                     )?;
                 }
-                Delivery::Async => {
+                Delivery::Async | Delivery::AsyncVoid => {
                     // The last three arguments are Rust's completion callback,
                     // its data, and an out-parameter in Rust's frame.
                     let n = args.len();
@@ -315,6 +324,15 @@ fn slot_{name}() -> Arc<Slot{name}> {{
                         bail!("async callback `{cb_name}` has no out-parameter")
                     };
                     let out = native_type(&out);
+                    // A zeroed status is a success.
+                    let failed = if *delivery == Delivery::AsyncVoid {
+                        format!("let result: {result_struct} = unsafe {{ std::mem::zeroed() }};")
+                    } else {
+                        format!(
+                            "let mut result: {result_struct} = unsafe {{ std::mem::zeroed() }};
+            result.r#call_status.code = CALL_UNEXPECTED_ERROR;"
+                        )
+                    };
                     let tuple: String = all[..n - 1].iter().map(|a| format!("{a},")).collect();
                     let call: String = all[..n - 1].iter().map(|a| format!("{a}, ")).collect();
                     let (complete, data) = (n - 3, n - 2);
@@ -332,8 +350,7 @@ fn slot_{name}() -> Arc<Slot{name}> {{
         }},
         move || {{
             warn_dropped();
-            let mut result: {result_struct} = unsafe {{ std::mem::zeroed() }};
-            result.r#call_status.code = CALL_UNEXPECTED_ERROR;
+            {failed}
             unsafe {{ complete(data, result) }};
         }},
     ));"
@@ -403,7 +420,7 @@ pub fn write_relay(
     std::fs::write(
         dir.join("README.md"),
         format!(
-            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
+            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread, and so that an async Rust call that outlives its Dart isolate, for example across a hot restart, finishes without crashing. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
             asset_id(config)
         ),
     )?;
@@ -493,6 +510,8 @@ mod tests {
                  u32 value();
                  [Throws=Failure] void check();
                  [Async] u32 later();
+                 [Async] void note_later(u32 v);
+                 [Async, Throws=Failure] void check_later();
              };",
         );
         let deliveries = deliveries(&ci);
@@ -503,6 +522,8 @@ mod tests {
             ("value", Delivery::Wait),
             ("check", Delivery::Wait),
             ("later", Delivery::Async),
+            ("note_later", Delivery::AsyncVoid),
+            ("check_later", Delivery::Async),
         ] {
             assert!(
                 deliveries.contains(&(field.to_owned(), expected)),

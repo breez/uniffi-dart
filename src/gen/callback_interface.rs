@@ -429,7 +429,13 @@ pub fn generate_callback_functions(
                             // The handle lookup and argument lifts run inside
                             // the guarded body: a stale handle or a failing
                             // lift must still complete the native future.
-                            final obj = FfiConverterCallbackInterface$cls_name._handleMap.get(uniffiHandle);
+                            $(handle_lookup(cls_name, m, quote! {
+                                final resultStruct = Struct.create<$(&struct_tokens)>();
+                                resultStruct.callStatus.code = CALL_SUCCESS;
+                                completed = true;
+                                callback(uniffiCallbackData, resultStruct);
+                                return;
+                            }))
                             $(arg_lifts)
                             final result = await obj.$method_name($(for arg in &arg_names => $arg,));
                             if (completed) {
@@ -494,7 +500,10 @@ pub fn generate_callback_functions(
                 static void $callback_method_name(int uniffiHandle, $(for param in &param_types => $param,) $out_return_type outReturn, Pointer<RustCallStatus> callStatus) {
                     final $call_status = callStatus.ref;
                     try {
-                        final obj = FfiConverterCallbackInterface$cls_name._handleMap.get(uniffiHandle);
+                        $(handle_lookup(cls_name, m, quote! {
+                            $call_status.code = CALL_SUCCESS;
+                            return;
+                        }))
                         $(arg_lifts)
                         $call_dart_method
                     } catch (e) {
@@ -531,6 +540,36 @@ pub fn generate_callback_functions(
                 Pointer.fromFunction<$free_callback_type>($free_callback_fn);
         })
 
+    }
+}
+
+/// Whether Rust may see a call that can't be delivered succeed instead of fail:
+/// the method returns nothing and can't throw. For such a method, UniFFI turns
+/// an unexpected error into a Rust panic, which aborts a `panic = "abort"`
+/// build. Dropping the call loses nothing that Rust could act on.
+pub fn droppable(method: &Method) -> bool {
+    method.return_type().is_none() && method.throws_type().is_none()
+}
+
+/// Looks up the callback object for `uniffiHandle` as `obj`. A handle this
+/// isolate doesn't have belongs to an isolate that has exited, for example
+/// before a hot restart (see `_uniffiHandlePrefix`). For a droppable method
+/// the call is dropped through `on_missing`, which must report success to Rust
+/// and return. Other methods throw a stale-handle error, which Rust receives as
+/// an unexpected error.
+fn handle_lookup(cls_name: &str, method: &Method, on_missing: dart::Tokens) -> dart::Tokens {
+    let map = quote!(FfiConverterCallbackInterface$cls_name._handleMap);
+    if droppable(method) {
+        let label = format!("{cls_name}.{}", DartCodeOracle::fn_name(method.name()));
+        quote! {
+            final obj = $(&map).maybeGet(uniffiHandle);
+            if (obj == null) {
+                uniffiDropCallback($(quoted(label)));
+                $on_missing
+            }
+        }
+    } else {
+        quote!(final obj = $map.get(uniffiHandle);)
     }
 }
 

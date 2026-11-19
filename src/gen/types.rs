@@ -668,7 +668,40 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
 
             typedef UniffiRustFutureContinuationCallback = Void Function(Uint64, Int8);
 
-            final _uniffiRustFutureContinuationHandles = UniffiHandleMap<Completer<int>>();
+            $(doc_comment(&[
+                "Where a Rust future reports that polling it again can make progress.",
+            ]))
+            abstract class _UniffiContinuation {
+                Pointer<NativeFunction<UniffiRustFutureContinuationCallback>> get callback;
+                int get data;
+                void close();
+            }
+
+            $(doc_comment(&[
+                "Without the callback relay, a future's continuation is a",
+                "`NativeCallable.listener`, which keeps the isolate alive until it's",
+                "closed. If the isolate is killed or replaced, as in a hot restart,",
+                "while the future is still running, Rust's wake-up calls a deleted",
+                "callback and the process crashes. The relay's continuation drops it.",
+            ]))
+            final class _UniffiListenerContinuation implements _UniffiContinuation {
+                _UniffiListenerContinuation(void Function(int) onPoll)
+                    : _callable = NativeCallable<UniffiRustFutureContinuationCallback>.listener(
+                        (int data, int pollResult) => onPoll(pollResult),
+                    );
+
+                final NativeCallable<UniffiRustFutureContinuationCallback> _callable;
+
+                @override
+                Pointer<NativeFunction<UniffiRustFutureContinuationCallback>> get callback =>
+                    _callable.nativeFunction;
+
+                @override
+                int get data => 0;
+
+                @override
+                void close() => _callable.close();
+            }
 
             Future<T> uniffiRustCallAsync<T, F>(
                 int Function() rustFutureFunc,
@@ -680,44 +713,34 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
             ]) async {
                 final rustFuture = rustFutureFunc();
                 final completer = Completer<int>();
-                final handle = _uniffiRustFutureContinuationHandles.insert(completer);
-                final callbackData = handle;
-
-                late final NativeCallable<UniffiRustFutureContinuationCallback> callback;
+                late final _UniffiContinuation continuation;
 
                 void repoll() {
                     pollFunc(
                         rustFuture,
-                        callback.nativeFunction,
-                        callbackData,
+                        continuation.callback,
+                        continuation.data,
                     );
                 }
 
-                void onResponse(int data, int pollResult) {
+                void onPoll(int pollResult) {
+                    if (completer.isCompleted) {
+                        return;
+                    }
                     if (pollResult == UNIFFI_RUST_FUTURE_POLL_READY) {
-                        final readyCompleter =
-                            _uniffiRustFutureContinuationHandles.maybeRemove(data);
-                        if (readyCompleter != null && !readyCompleter.isCompleted) {
-                            readyCompleter.complete(pollResult);
-                        }
+                        completer.complete(pollResult);
                     } else if (pollResult == UNIFFI_RUST_FUTURE_POLL_MAYBE_READY) {
                         repoll();
                     } else {
-                        final errorCompleter =
-                            _uniffiRustFutureContinuationHandles.maybeRemove(data);
-                        if (errorCompleter != null && !errorCompleter.isCompleted) {
-                            errorCompleter.completeError(
-                                UniffiInternalError.panicked(
-                                    "Unexpected poll result from Rust future: $pollResult",
-                                ),
-                            );
-                        }
+                        completer.completeError(
+                            UniffiInternalError.panicked(
+                                "Unexpected poll result from Rust future: $pollResult",
+                            ),
+                        );
                     }
                 }
 
-                callback = NativeCallable<UniffiRustFutureContinuationCallback>.listener(
-                  onResponse,
-                );
+                continuation = _uniffiRelayContinuation(onPoll) ?? _UniffiListenerContinuation(onPoll);
 
                 try {
                     repoll();
@@ -735,8 +758,7 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                         calloc.free(status);
                     }
                 } finally {
-                    callback.close();
-                    _uniffiRustFutureContinuationHandles.maybeRemove(handle);
+                    continuation.close();
                     freeFunc(rustFuture);
                 }
             }
@@ -796,7 +818,9 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 "but each isolate numbers its handles itself. After a Flutter hot",
                 "restart, Rust can still hold handles from the old isolate. A random",
                 "per-isolate prefix makes those miss in the new isolate's maps instead",
-                "of reaching (or freeing) its objects. Until callback handles are",
+                "of reaching (or freeing) its objects. A miss fails the call, except",
+                "that `uniffiDropCallback` drops calls to methods that return nothing",
+                "and can't throw. Until callback handles are",
                 "lowered as Uint64, 32-bit targets carry them in a pointer, so they get",
                 "no prefix there.",
             ]))
@@ -825,6 +849,10 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 return obj;
                 }
 
+                T? maybeGet(int handle) {
+                return _map[handle];
+                }
+
                 T remove(int handle) {
                 final obj = maybeRemove(handle);
                 if (obj == null) {
@@ -837,6 +865,33 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 T? maybeRemove(int handle) {
                 return _map.remove(handle);
                 }
+            }
+
+            bool _uniffiDroppedCallbackWarned = false;
+
+            $(doc_comment(&[
+                "Drops a call to a callback method that returns nothing and can't throw,",
+                "made for a callback object this isolate doesn't have: in practice one",
+                "registered by an isolate that has exited, for example before a hot",
+                "restart. Rust sees the call succeed. Reporting an unexpected error",
+                "instead would panic in Rust, since the method has no error type, and",
+                "with `panic = \"abort\"` that ends the process. Logs one warning per",
+                "isolate.",
+            ]))
+            void uniffiDropCallback(String method) {
+                if (_uniffiDroppedCallbackWarned) {
+                    return;
+                }
+                _uniffiDroppedCallbackWarned = true;
+                // Concatenated, since genco escapes `$` in string literals.
+                print(
+                    "uniffi-dart: dropped a call to " + method +
+                    " for a callback object that "
+                    "this isolate does not have, most likely one registered by an "
+                    "isolate that has exited, for example before a hot restart. Calls "
+                    "that return nothing and cannot throw are dropped this way, as if "
+                    "they had succeeded.",
+                );
             }
 
 
