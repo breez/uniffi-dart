@@ -96,6 +96,40 @@ fn is_rustbuffer_fn(ci: &ComponentInterface, name: &str) -> bool {
 /// `include` partitions them: the shared runtime file takes the `rustbuffer_*`
 /// helpers it calls from `RustBuffer`, and each component file takes the rest.
 /// Declaring a symbol in both places would be a duplicate definition.
+/// The component's NativeFinalizers for Rust futures, one for each future free
+/// function that its async calls use. Each frees, from the relay's free
+/// thread, a future whose isolate exited before the call completed.
+fn future_finalizers(ci: &ComponentInterface) -> dart::Tokens {
+    let mut tokens = quote!();
+    for free in dispatch::relay::future_frees(ci) {
+        let name = free.name().to_owned();
+        let Some(arg) = free.arguments().first().map(|arg| arg.type_()) else { continue };
+        let free_type =
+            &quote!(Void Function($(DartCodeOracle::ffi_native_type_label(Some(&arg)))));
+        let set = &format!("_uniffiRelaySet_{name}");
+        let finalize = &format!("_uniffiRelayFinalize_{name}");
+        tokens.append(quote! {
+            @Native<Void Function(Pointer<NativeFunction<$free_type>>)>(
+                assetId: uniffiCallbackRelayAsset,
+                symbol: $(quoted(dispatch::relay::future_set_free_symbol(&name))),
+            )
+            external void $set(Pointer<NativeFunction<$free_type>> free);
+
+            @Native<Void Function(Pointer<Void>)>(
+                assetId: uniffiCallbackRelayAsset,
+                symbol: $(quoted(dispatch::relay::future_finalize_symbol(&name))),
+            )
+            external void $finalize(Pointer<Void> token);
+
+            final NativeFinalizer? $(DartCodeOracle::future_finalizer_name(&name)) = uniffiRelayFinalizer(
+                () => $set(Native.addressOf<NativeFunction<$free_type>>($(&name))),
+                () => Native.addressOf<NativeFinalizerFunction>($finalize),
+            );
+        });
+    }
+    tokens
+}
+
 fn uniffi_function_definitions(
     ci: &ComponentInterface,
     asset_id: &str,
@@ -225,6 +259,8 @@ impl<'a> DartWrapper<'a> {
             })
 
             $(functions_definitions)
+
+            $(if !self.config.callback_dispatch => $(future_finalizers(self.ci)))
 
             // FFI function definitions using @Native
             $(uniffi_function_definitions(self.ci, "_uniffiAssetId", |name| !is_rustbuffer_fn(self.ci, name), self.config.callback_dispatch))

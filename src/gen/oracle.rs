@@ -5,6 +5,7 @@ use uniffi_bindgen::interface::{Argument, AsType, Callable, FfiType, Object, Obj
 use uniffi_bindgen::ComponentInterface;
 
 // use super::render::{AsRenderable, Renderable};
+use super::render::TypeHelperRenderer;
 use super::{callback_interface, compounds, custom, enums, objects, records};
 use crate::gen::{primitives, CodeType};
 
@@ -239,6 +240,25 @@ impl DartCodeOracle {
     pub fn async_free(callable: impl Callable, ci: &ComponentInterface) -> dart::Tokens {
         let ffi_func = callable.ffi_rust_future_free(ci);
         quote!($ffi_func)
+    }
+
+    /// The NativeFinalizer that frees the call's Rust future if its isolate
+    /// exits first: the component's one for the future's free function, or
+    /// none in dispatch mode, which has no free thread.
+    pub fn async_finalizer(
+        callable: impl Callable,
+        type_helper: &dyn TypeHelperRenderer,
+    ) -> dart::Tokens {
+        if type_helper.callback_dispatch() {
+            return quote!(null);
+        }
+        let free = callable.ffi_rust_future_free(type_helper.get_ci());
+        quote!($(Self::future_finalizer_name(&free)))
+    }
+
+    /// The component's NativeFinalizer for the Rust futures that `free` frees.
+    pub fn future_finalizer_name(free: &str) -> String {
+        format!("_uniffiFinalizer_{free}")
     }
 
     /// Get the idiomatic Dart rendering of a class name based on `Type`.

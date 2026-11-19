@@ -173,8 +173,10 @@ methods an error type, or release their callbacks before the restart.
 
 An async Rust function that Dart called and that is still running when its
 isolate is replaced, or killed, finishes without calling into it: the relay
-drops its wake-up. Nothing frees the finished Rust future, so its result stays
-allocated.
+drops its wake-up. Once the VM collects the isolate's objects, the relay also
+frees the Rust future, which cancels it and releases what it holds, such as
+the object whose method was called (see
+[Freeing Rust objects](#freeing-rust-objects)).
 
 An async callback that is still running in an isolate when it exits never
 completes, so the Rust future awaiting it waits forever. Rust code that awaits
@@ -191,7 +193,9 @@ before a hot restart, for example by disconnecting, or use a full restart.
 
 A Rust object that Dart holds is freed by `dispose()`, or once its Dart object
 is unreachable. With the relay library, a `NativeFinalizer` hands it to the
-relay's free thread. That also happens after the object's isolate has exited,
+relay's free thread. Each async Rust call gets one too, for its Rust future,
+which holds its arguments and the object whose method was called until the
+call completes. That also happens after the object's isolate has exited,
 when the VM collects the isolate's objects or shuts down its isolate group, as
 in a hot restart. So the old isolate's objects are released, and a Rust object
 that stops its own work when dropped stops too. The free runs on that thread,
@@ -199,7 +203,8 @@ not in the finalizer, because a finalizer must not call into the Dart VM and an
 object's `Drop` can, for example by releasing a Dart callback.
 
 Without the relay library, a `Finalizer` frees the object on its isolate's
-event loop, and the objects of an exited isolate are never freed.
+event loop, and the objects of an exited isolate are never freed, nor are the
+Rust futures of its unfinished async calls.
 
 ## Deadlocks
 

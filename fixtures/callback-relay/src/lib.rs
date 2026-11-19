@@ -293,6 +293,18 @@ impl Droppable {
     pub fn new() -> Arc<Self> {
         Arc::new(Self)
     }
+
+    /// Finishes after `ms` milliseconds. Until then its Rust future holds
+    /// this object, as an SDK method's future holds the SDK.
+    pub async fn hold_for(self: Arc<Self>, ms: u32) -> u32 {
+        runtime()
+            .spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(ms.into())).await;
+                ms
+            })
+            .await
+            .expect("tokio task")
+    }
 }
 
 impl Drop for Droppable {
