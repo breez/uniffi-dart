@@ -17,6 +17,11 @@ external void _uniffiRelayDrain(int endpoint);
   symbol: 'uniffi_dispatch_pending',
 )
 external bool _uniffiRelayPending(int endpoint);
+@Native<UniffiRustFutureContinuationCallback>(
+  assetId: uniffiCallbackRelayAsset,
+  symbol: 'uniffi_dispatch_continue',
+)
+external void _uniffiRelayContinue(int data, int pollResult);
 
 /// Whether the relay has calls queued for this isolate. The relay runs at
 /// most 64 per wake-up, so the barrier checks this before completing.
@@ -38,6 +43,10 @@ abstract final class UniffiCallbackRelay {
   static RawReceivePort? _port;
   static final _warned = <String>{};
 
+  /// The Rust futures this isolate is polling through the relay, by id.
+  static final _continuations = <int, void Function(int)>{};
+  static int _lastContinuation = 0;
+
   /// This isolate's relay endpoint, or null when the library isn't bundled.
   static int? get endpoint {
     if (_checked) return _endpoint;
@@ -57,10 +66,17 @@ abstract final class UniffiCallbackRelay {
         'uniffi_dispatch crate generated with these bindings.',
       );
     }
-    // The relay wakes this isolate by posting to the port. Posting to a closed
+    // The relay wakes this isolate by posting to the port: null to run queued
+    // callbacks, or a Rust future's wake-up as an integer. Posting to a closed
     // port fails instead of aborting, so the relay notices when the isolate
-    // has exited. Like listeners, the port doesn't keep the isolate alive.
-    final port = RawReceivePort((_) {
+    // has exited. Like listeners, the port doesn't keep the isolate alive,
+    // except while a Rust future is pending.
+    final port = RawReceivePort((Object? message) {
+      if (message is int) {
+        // The future's id, then the poll result in the low byte.
+        _continuations[message >> 8]?.call((message & 0xff).toSigned(8));
+        return;
+      }
       final id = _endpoint;
       if (id != null) _uniffiRelayDrain(id);
     }, 'uniffi callback relay');
@@ -86,3 +102,51 @@ abstract final class UniffiCallbackRelay {
     if (_warned.add(component)) print(message);
   }
 }
+
+/// A Rust future's continuation through the relay. Rust may call it from any
+/// thread, even after this isolate has exited: the relay posts each wake-up to
+/// this isolate's port, and drops it if the isolate has gone. While any are
+/// open, the port keeps the isolate alive, as a listener would.
+final class _UniffiRelayContinuation implements _UniffiContinuation {
+  _UniffiRelayContinuation._(this.data, this._id);
+
+  static final _continue =
+      Native.addressOf<NativeFunction<UniffiRustFutureContinuationCallback>>(
+        _uniffiRelayContinue,
+      );
+
+  static _UniffiRelayContinuation? open(void Function(int) onPoll) {
+    final endpoint = UniffiCallbackRelay.endpoint;
+    // The endpoint shares the callback data with the id.
+    if (endpoint == null || endpoint >= 1 << 32) return null;
+    final continuations = UniffiCallbackRelay._continuations;
+    var id = UniffiCallbackRelay._lastContinuation;
+    do {
+      id = (id + 1) & 0xffffffff;
+    } while (continuations.containsKey(id));
+    UniffiCallbackRelay._lastContinuation = id;
+    continuations[id] = onPoll;
+    UniffiCallbackRelay._port!.keepIsolateAlive = true;
+    return _UniffiRelayContinuation._((endpoint << 32) | id, id);
+  }
+
+  @override
+  final int data;
+  final int _id;
+
+  @override
+  Pointer<NativeFunction<UniffiRustFutureContinuationCallback>> get callback =>
+      _continue;
+
+  @override
+  void close() {
+    final continuations = UniffiCallbackRelay._continuations;
+    continuations.remove(_id);
+    if (continuations.isEmpty) {
+      UniffiCallbackRelay._port!.keepIsolateAlive = false;
+    }
+  }
+}
+
+_UniffiContinuation? _uniffiRelayContinuation(void Function(int) onPoll) =>
+    _UniffiRelayContinuation.open(onPoll);

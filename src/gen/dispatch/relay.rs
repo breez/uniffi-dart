@@ -8,6 +8,8 @@
 //! return something block until the isolate has run them. If the isolate has
 //! exited, calls that return nothing and can't throw are dropped as if they
 //! had succeeded, and other calls fail or complete with an unexpected error.
+//! The companion also carries the wake-ups of Rust futures that Dart awaits,
+//! so a future that outlives its isolate doesn't call into it.
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -418,7 +420,7 @@ pub fn write_relay(
     std::fs::write(
         dir.join("README.md"),
         format!(
-            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
+            "# Generated callback relay\n\nBuild this crate for the same targets as the original native library. It uses only the Rust standard library.\n\nLibrary basename: `{crate_name}`.\nNative asset ID: `{}`.\n\nBundle it with the original library so that Rust can call these bindings' callbacks from any thread, and so that an async Rust call that outlives its Dart isolate, for example across a hot restart, finishes without crashing. Without it, synchronous callbacks run only on the isolate's own thread. See docs/callback-threads.md in uniffi-dart.\n",
             asset_id(config)
         ),
     )?;
