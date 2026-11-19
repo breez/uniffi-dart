@@ -64,6 +64,7 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
                   $(DartCodeOracle::async_free(func, type_helper.get_ci())),
                   $async_lifter,
                   $error_handler,
+                  $(DartCodeOracle::async_finalizer(func, type_helper)),
                 );
             }
         )

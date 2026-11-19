@@ -182,6 +182,7 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
                       $(DartCodeOracle::async_free(constructor, type_helper.get_ci())),
                       (Pointer<Void> ptr) => $cls_name._(ptr),
                       $error_handler,
+                      $(DartCodeOracle::async_finalizer(constructor, type_helper)),
                     );
                 }
             });
@@ -470,6 +471,7 @@ fn generate_callback_trait_rust_method(
                     $(DartCodeOracle::async_free(method, type_helper.get_ci())),
                     $async_lifter,
                     $error_handler,
+                    $(DartCodeOracle::async_finalizer(method, type_helper)),
                 );
             }
         }
@@ -552,6 +554,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
                   $(DartCodeOracle::async_free(func, type_helper.get_ci())),
                   $async_lifter,
                   $error_handler,
+                  $(DartCodeOracle::async_finalizer(func, type_helper)),
                 );
             }
 
@@ -857,7 +860,7 @@ fn object_finalizer(
     let finalizer = quote! {
         UniffiObjectFinalizer(
             $fallback,
-            () => uniffiRelayObjectFinalizer(
+            () => uniffiRelayFinalizer(
                 () => $set_free(Native.addressOf<NativeFunction<$free_type>>($(&free))),
                 () => Native.addressOf<NativeFinalizerFunction>($finalize),
             ),

@@ -335,6 +335,25 @@ impl DartCodeOracle {
         quote!($ffi_func)
     }
 
+    /// The NativeFinalizer that frees the call's Rust future if its isolate
+    /// exits first: the component's one for the future's free function, or
+    /// none in dispatch mode, which has no free thread.
+    pub fn async_finalizer(
+        callable: impl Callable,
+        type_helper: &dyn TypeHelperRenderer,
+    ) -> dart::Tokens {
+        if type_helper.callback_dispatch() {
+            return quote!(null);
+        }
+        let free = callable.ffi_rust_future_free(type_helper.get_ci());
+        quote!($(Self::future_finalizer_name(&free)))
+    }
+
+    /// The component's NativeFinalizer for the Rust futures that `free` frees.
+    pub fn future_finalizer_name(free: &str) -> String {
+        format!("_uniffiFinalizer_{free}")
+    }
+
     /// Get the idiomatic Dart rendering of a class name based on `Type`.
     pub fn dart_type_label(type_: Option<&Type>) -> dart::Tokens {
         if let Some(ret_type) = type_ {

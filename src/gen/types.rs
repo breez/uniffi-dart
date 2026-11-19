@@ -703,6 +703,19 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 void close() => _callable.close();
             }
 
+            $(doc_comment(&[
+                "Ties a Rust future to the lifetime of the async call awaiting it.",
+            ]))
+            final class _UniffiFutureToken implements Finalizable {}
+
+            $(doc_comment(&[
+                "Runs an async Rust call to completion and frees its Rust future.",
+                "",
+                "With the callback relay bundled, [futureFinalizer] also frees the future",
+                "if this isolate exits first, as in a hot restart. The future can hold",
+                "Rust objects, such as a method's receiver, which would otherwise stay",
+                "alive for the life of the process.",
+            ]))
             Future<T> uniffiRustCallAsync<T, F>(
                 int Function() rustFutureFunc,
                 void Function(int, Pointer<NativeFunction<UniffiRustFutureContinuationCallback>>, int) pollFunc,
@@ -710,8 +723,11 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 void Function(int) freeFunc,
                 T Function(F) liftFunc, [
                 UniffiRustCallStatusErrorHandler? errorHandler,
+                NativeFinalizer? futureFinalizer,
             ]) async {
                 final rustFuture = rustFutureFunc();
+                final token = _UniffiFutureToken();
+                futureFinalizer?.attach(token, Pointer<Void>.fromAddress(rustFuture), detach: token);
                 final completer = Completer<int>();
                 late final _UniffiContinuation continuation;
 
@@ -758,6 +774,7 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                         calloc.free(status);
                     }
                 } finally {
+                    futureFinalizer?.detach(token);
                     continuation.close();
                     freeFunc(rustFuture);
                 }
