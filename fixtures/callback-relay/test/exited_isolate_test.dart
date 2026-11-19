@@ -1,9 +1,17 @@
+import 'dart:async';
 import 'dart:isolate';
 
 import 'package:test/test.dart';
 
 import '../callback_relay.dart';
 import 'support.dart';
+
+/// Starts an async Rust call, signals, and waits for the call to finish.
+Future<void> _finishLaterAfterSignal(SendPort started) async {
+  final finishing = finishLater(ms: 200);
+  started.send(null);
+  await finishing;
+}
 
 void main() {
   test('callbacks of an exited isolate fail instead of aborting', () async {
@@ -44,5 +52,19 @@ void main() {
       5,
       [4],
     ]);
+  }, skip: companion == 'bundled' ? false : 'needs the relay library');
+
+  test('an async Rust call can finish after its isolate is killed', () async {
+    final started = ReceivePort();
+    final isolate = await Isolate.spawn(
+      _finishLaterAfterSignal,
+      started.sendPort,
+    );
+    await started.first;
+    isolate.kill(priority: Isolate.immediate);
+    // The Rust future finishes on a tokio worker after the isolate has gone,
+    // as one does across a hot restart, and wakes its continuation.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(await finishLater(ms: 1), 1);
   }, skip: companion == 'bundled' ? false : 'needs the relay library');
 }

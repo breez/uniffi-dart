@@ -207,4 +207,17 @@ pub async fn kept_value_later_from_tokio() -> Option<u32> {
     runtime().spawn(async move { keeper.value_later().await }).await.ok()
 }
 
+/// Finishes after `ms` milliseconds on a tokio worker, which wakes the
+/// caller's continuation from that thread.
+#[uniffi::export]
+pub async fn finish_later(ms: u32) -> u32 {
+    runtime()
+        .spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(ms.into())).await;
+            ms
+        })
+        .await
+        .expect("tokio task")
+}
+
 uniffi::include_scaffolding!("api");

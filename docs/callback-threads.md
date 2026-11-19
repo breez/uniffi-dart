@@ -81,6 +81,10 @@ calls in order when it gets the message. A Rust thread that needs a result
 blocks until then. Calls from one Rust thread run in the order it made them,
 so a `set()` followed by a `get()` sees the new value.
 
+The relay also carries the wake-ups of Rust futures that Dart awaits, in place
+of a listener per async call. It posts each one to the awaiting isolate's port,
+and drops it if that isolate has exited.
+
 ## When listener calls run
 
 Without the relay library, a listener call is queued to the isolate and runs on
@@ -125,7 +129,8 @@ Callbacks don't keep their isolate alive. A command line program exits when
 `main` finishes, even if Rust still holds a callback. If you expect a callback,
 keep the isolate alive yourself, for example by awaiting a `Completer` that the
 callback completes. Calls that Rust queues after the main isolate has exited
-are dropped as the process exits.
+are dropped as the process exits. An async Rust function that Dart is awaiting
+does keep the isolate alive until it finishes.
 
 ### Exited isolates and hot restart
 
@@ -154,13 +159,20 @@ turns that error into a Rust panic, which ends the process in a build with
 before the restart.
 
 An async Rust function that Dart called and that is still running when its
-isolate is replaced wakes the old isolate's listener when it finishes, which
-crashes the process. The same applies to an isolate that is killed.
+isolate is replaced, or killed, finishes without calling into it: the relay
+drops its wake-up. Nothing frees the finished Rust future, so its result stays
+allocated.
+
+An async callback that is still running in an isolate when it exits never
+completes, so the Rust future awaiting it waits forever. Rust code that awaits
+such callbacks one at a time, for example to deliver events to listeners, stops
+delivering after the stuck call.
 
 Without the relay library, a listener call for an exited isolate aborts the
-process with `Callback invoked after it has been deleted`. Release Rust-held
-callbacks and let async Rust calls finish before a hot restart, for example by
-disconnecting, or use a full restart.
+process with `Callback invoked after it has been deleted`. That includes the
+wake-up of an async Rust function that was still running when its isolate was
+replaced or killed. Release Rust-held callbacks and let async Rust calls finish
+before a hot restart, for example by disconnecting, or use a full restart.
 
 ## Deadlocks
 
