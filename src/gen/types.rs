@@ -822,21 +822,35 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 "that `uniffiDropCallback` drops calls to methods that return nothing",
                 "and can't throw. Until callback handles are",
                 "lowered as Uint64, 32-bit targets carry them in a pointer, so they get",
-                "no prefix there.",
+                "no prefix there. With the callback relay bundled, callback handles",
+                "come from the relay instead, which sends each call to the isolate",
+                "that owns its handle.",
             ]))
             final int _uniffiHandlePrefix =
                 sizeOf<IntPtr>() == 8 ? (Random().nextInt(1 << 30) + 1) << 32 : 0;
 
             // As of uniffi 0.30, foreign handles must always have the lowest bit set
             // This is achieved here with an odd number sequence.
+            //
+            // A `relayed` map holds callback objects. With the callback relay
+            // bundled, it takes its handles from the relay, and tells the relay
+            // when Rust gives one up.
             class UniffiHandleMap<T> {
+                UniffiHandleMap({bool relayed = false}) : _relayed = relayed;
+
+                final bool _relayed;
                 final Map<int, T> _map = {};
                 int _counter = _uniffiHandlePrefix + 1;
 
                 int insert(T obj) {
+                final handle = (_relayed ? _uniffiRelayHandleNew() : null) ?? _nextHandle();
+                _map[handle] = obj;
+                return handle;
+                }
+
+                int _nextHandle() {
                 final handle = _counter;
                 _counter += 2;
-                _map[handle] = obj;
                 return handle;
                 }
 
@@ -863,7 +877,11 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 }
 
                 T? maybeRemove(int handle) {
-                return _map.remove(handle);
+                final obj = _map.remove(handle);
+                if (obj != null && _relayed) {
+                    _uniffiRelayHandleRelease(handle);
+                }
+                return obj;
                 }
             }
 

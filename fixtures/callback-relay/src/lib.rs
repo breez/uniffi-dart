@@ -207,6 +207,67 @@ pub async fn kept_value_later_from_tokio() -> Option<u32> {
     runtime().spawn(async move { keeper.value_later().await }).await.ok()
 }
 
+/// Used only by the two-isolate tests, so other test isolates never install
+/// its vtable.
+#[uniffi::export(callback_interface)]
+#[async_trait::async_trait]
+pub trait Tally: Send + Sync {
+    fn name(&self) -> String;
+    fn add(&self, amount: u32);
+    async fn total_later(&self) -> u32;
+}
+
+static TALLIES: Mutex<Vec<Arc<dyn Tally>>> = Mutex::new(Vec::new());
+
+fn tallies() -> Vec<Arc<dyn Tally>> {
+    TALLIES.lock().unwrap().clone()
+}
+
+#[uniffi::export]
+pub fn add_tally(tally: Box<dyn Tally>) {
+    TALLIES.lock().unwrap().push(Arc::from(tally));
+}
+
+#[uniffi::export]
+pub fn release_tallies() {
+    TALLIES.lock().unwrap().clear();
+}
+
+/// Each tally's name, read from its own `std::thread`, or `None` if the call
+/// panicked.
+#[uniffi::export]
+pub async fn tally_names_from_threads() -> Vec<Option<String>> {
+    let mut names = Vec::new();
+    for tally in tallies() {
+        names.push(on_thread(move || tally.name()).await);
+    }
+    names
+}
+
+/// Adds `amount` to every tally from a tokio task. Returns false if a call
+/// panicked.
+#[uniffi::export]
+pub async fn add_to_tallies_from_tokio(amount: u32) -> bool {
+    runtime()
+        .spawn(async move {
+            for tally in tallies() {
+                tally.add(amount);
+            }
+        })
+        .await
+        .is_ok()
+}
+
+/// Each tally's total from a tokio task, or `None` if the call failed.
+#[uniffi::export]
+pub async fn tally_totals_from_tokio() -> Vec<Option<u32>> {
+    let mut totals = Vec::new();
+    for tally in tallies() {
+        totals.push(runtime().spawn(async move { tally.total_later().await }).await.ok());
+    }
+    totals
+}
+
 /// Finishes after `ms` milliseconds on a tokio worker, which wakes the
 /// caller's continuation from that thread.
 #[uniffi::export]

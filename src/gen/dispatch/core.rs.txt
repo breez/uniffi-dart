@@ -70,6 +70,10 @@ fn abandon_all(jobs: impl IntoIterator<Item = Job>) {
 }
 type CurrentIsolate = unsafe extern "C" fn() -> *mut c_void;
 type PostCObject = unsafe extern "C" fn(i64, *mut DartCObject) -> bool;
+type MainPortId = unsafe extern "C" fn() -> i64;
+/// `Dart_GetMainPortId`, when the VM provides it. There is one Dart VM per
+/// process.
+static MAIN_PORT_ID: OnceLock<MainPortId> = OnceLock::new();
 #[repr(C)]
 struct DartApiEntry {
     name: *const c_char,
@@ -181,6 +185,7 @@ struct Endpoint {
     post: PostCObject,
     current_isolate: Option<CurrentIsolate>,
     owner_isolate: usize,
+    owner_main_port: i64,
     state: Mutex<State>,
     ready: Condvar,
     vtables: Mutex<HashMap<&'static str, Box<dyn Any + Send + Sync>>>,
@@ -296,12 +301,16 @@ impl Endpoint {
         }
     }
     /// True on the owning isolate's thread: while it drains or pumps this
-    /// endpoint, or whenever the VM reports that isolate as current.
+    /// endpoint, or whenever the VM reports that isolate as current. A new
+    /// isolate can reuse an exited one's address, for example after a hot
+    /// restart, but not its main port, so that is compared too when the VM
+    /// provides it.
     fn on_owner_thread(&self) -> bool {
         OWNERS.with(|owners| owners.borrow().last() == Some(&self.id))
-            || self
-                .current_isolate
-                .is_some_and(|current| unsafe { current() as usize == self.owner_isolate })
+            || self.current_isolate.is_some_and(|current| unsafe {
+                current() as usize == self.owner_isolate
+                    && MAIN_PORT_ID.get().is_none_or(|main_port| main_port() == self.owner_main_port)
+            })
     }
     fn vtable<T: Clone + 'static>(&self, name: &'static str) -> T {
         self.vtables.lock().unwrap().get(name).unwrap().downcast_ref::<T>().unwrap().clone()
@@ -389,13 +398,22 @@ unsafe extern "C" fn uniffi_dispatch_create(port: i64, data: *const DartApi) -> 
     if owner_isolate == 0 {
         return 0;
     }
-    create_endpoint(port, post, Some(current), owner_isolate)
+    let owner_main_port = match dart_api_function(data, b"Dart_GetMainPortId") {
+        Some(main_port) => {
+            let main_port = std::mem::transmute::<*const (), MainPortId>(main_port);
+            let _ = MAIN_PORT_ID.set(main_port);
+            main_port()
+        }
+        None => 0,
+    };
+    create_endpoint(port, post, Some(current), owner_isolate, owner_main_port)
 }
 fn create_endpoint(
     port: i64,
     post: PostCObject,
     current_isolate: Option<CurrentIsolate>,
     owner_isolate: usize,
+    owner_main_port: i64,
 ) -> u64 {
     let id = next_id();
     endpoints().lock().unwrap().insert(
@@ -406,6 +424,7 @@ fn create_endpoint(
             post,
             current_isolate,
             owner_isolate,
+            owner_main_port,
             state: Mutex::new(State::default()),
             ready: Condvar::new(),
             vtables: Mutex::new(HashMap::new()),
@@ -449,6 +468,57 @@ pub extern "C" fn uniffi_dispatch_continue(data: u64, poll_result: i8) {
         return;
     };
     ep.resume((((data & 0xffff_ffff) << 8) | u64::from(poll_result as u8)) as i64);
+}
+/// The endpoint of the isolate that owns each callback handle the relay has
+/// given out. Handles come from one counter for the whole process, so each one
+/// names one object in one isolate, and none is reused.
+static HANDLES: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+fn handles() -> &'static Mutex<HashMap<u64, u64>> {
+    HANDLES.get_or_init(Default::default)
+}
+/// A new callback handle, owned by the endpoint's isolate. Handles are odd,
+/// as UniFFI requires of foreign handles.
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_handle_new(ep: u64) -> u64 {
+    let handle = NEXT_HANDLE.fetch_add(2, Ordering::Relaxed);
+    handles().lock().unwrap().insert(handle, ep);
+    handle
+}
+/// Forgets a callback handle that Rust has given up: freed, or passed back
+/// to Dart.
+#[no_mangle]
+pub extern "C" fn uniffi_dispatch_handle_release(handle: u64) {
+    handles().lock().unwrap().remove(&handle);
+}
+/// The inline vtables that isolates have installed for one callback type, in
+/// install order. Each call goes to the isolate that owns its handle, so
+/// several isolates can implement the same type at once.
+struct Slots<V> {
+    installed: Mutex<Vec<(Arc<Endpoint>, V)>>,
+}
+impl<V: Copy> Slots<V> {
+    const fn new() -> Self {
+        Self { installed: Mutex::new(Vec::new()) }
+    }
+    fn install(&self, ep: Arc<Endpoint>, inline: V) {
+        let mut installed = self.installed.lock().unwrap();
+        installed.retain(|(other, _)| other.id != ep.id);
+        installed.push((ep, inline));
+    }
+    /// The endpoint and inline vtable for a call on `handle`. An exited
+    /// isolate keeps its entry, so its handles fail or are dropped there. A
+    /// handle the relay didn't give out goes to the isolate that installed
+    /// last, which fails it as stale, as UniFFI's single vtable would.
+    fn route(&self, handle: u64) -> (Arc<Endpoint>, V) {
+        let owner = handles().lock().unwrap().get(&handle).copied();
+        let installed = self.installed.lock().unwrap();
+        let (ep, inline) = owner
+            .and_then(|id| installed.iter().rev().find(|(ep, _)| ep.id == id))
+            .or(installed.last())
+            .expect("relay vtable installed before use");
+        (ep.clone(), *inline)
+    }
 }
 /// Checks every endpoint for an exited isolate, so jobs queued to it complete
 /// with an error instead of waiting forever. Called when a vtable is installed,

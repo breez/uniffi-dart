@@ -75,3 +75,19 @@ class DartKeeper implements Keeper {
   @override
   Future<void> noteLater(int value) async => notes.add(value);
 }
+
+class DartTally implements Tally {
+  DartTally(this._name);
+
+  final String _name;
+  var total = 0;
+
+  @override
+  String name() => _name;
+
+  @override
+  void add(int amount) => total += amount;
+
+  @override
+  Future<int> totalLater() async => total;
+}
