@@ -292,11 +292,14 @@ impl BindingGenerator for DartBindingGenerator {
                 let hash = dispatch::relay::abi_hash(&relayed)?;
                 dispatch::relay::dart_runtime(&first.config, hash)
             }
-            // The barrier asks the relay for queued calls, and async calls
-            // ask it for a continuation. Without one there are no queued
-            // calls, and async calls use listeners.
+            // The barrier asks the relay for queued calls, async calls ask
+            // it for a continuation, and callback handle maps ask it for
+            // handles. Without one there are no queued calls, async calls use
+            // listeners, and handle maps number their own handles.
             _ => "bool _uniffiRelayHasQueuedCalls() => false;\n\
-                  _UniffiContinuation? _uniffiRelayContinuation(void Function(int) onPoll) => null;\n"
+                  _UniffiContinuation? _uniffiRelayContinuation(void Function(int) onPoll) => null;\n\
+                  int? _uniffiRelayHandleNew() => null;\n\
+                  void _uniffiRelayHandleRelease(int handle) {}\n"
                 .to_owned(),
         };
         let write_dart = |filename: camino::Utf8PathBuf, tokens: dart::Tokens| -> Result<()> {

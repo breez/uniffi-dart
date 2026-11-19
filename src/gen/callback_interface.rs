@@ -143,7 +143,7 @@ pub fn generate_callback_interface(
 
         // This is the type helper to convert from FFI to Dart
         class $ffi_conv_name {
-            static final _handleMap = UniffiHandleMap<$cls_name>();
+            static final _handleMap = UniffiHandleMap<$cls_name>(relayed: true);
             static bool _vtableInitialized = false;
 
             static $cls_name lift(Pointer<Void> handle) {
