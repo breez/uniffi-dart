@@ -20,18 +20,18 @@ upstream supports.
 
 ## Upstream status
 
-Last checked 2026-11-19 against `Uniffi-Dart/uniffi-dart`. The fork's base is
+Last checked 2026-11-20 against `Uniffi-Dart/uniffi-dart`. The fork's base is
 upstream main at `304bae0` (`ab977ca` plus #197).
 
 Carried PRs, at the head the fork has:
 
 | PR | Head in the fork | Carried as |
 |---|---|---|
-| #178 | `9573490` | `upstream-pr-178` |
-| #181 | `325c0ea` | `savage-pr-181-on-0.29` (plus `a2944e7`) |
-| #183 | `ccc93d6` | `upstream-pr-183` |
+| #178 | `7b74171` | `upstream-pr-178` |
+| #181 | `8d15f6a` | `savage-pr-181-on-0.29` (plus `a2944e7`) |
+| #183 | `67d487c` | `upstream-pr-183` |
 | #188 | `f0b7a21` | `savage-pr-188-on-0.29` |
-| #190 | `41e82ed` | `savage-pr-190-on-0.29`, adapted (Rust-future part only) |
+| #190 | `697036b` | `savage-pr-190-on-0.29`, adapted (Rust-future part only) |
 | #196 | `de8675a` | `upstream-pr-196` |
 
 Watched, not carried: #191 (Rust `Display` for error messages, would fix
@@ -44,7 +44,8 @@ To compare against upstream:
 
 ```sh
 PRS="178 181 183 188 190 196 191 149"
-git fetch upstream main $(for p in $PRS; do printf 'pull/%s/head:refs/remotes/upstream/pr/%s ' $p $p; done)
+# The + lets a rebased PR head replace the old one. Without it, git fetch keeps the old head.
+git fetch upstream main $(for p in $PRS; do printf '+pull/%s/head:refs/remotes/upstream/pr/%s ' $p $p; done)
 git rev-parse --short upstream/main        # expect the base above
 for p in $PRS; do echo "#$p $(git rev-parse --short upstream/pr/$p)"; done   # expect the heads above
 for p in $PRS; do gh pr view $p -R Uniffi-Dart/uniffi-dart \
@@ -69,12 +70,12 @@ moves to the merged table and becomes part of the base.
 | Item | Upstream | Same as upstream? | Converges by |
 |---|---|---|---|
 | UniFFI 0.29.4 port (`savage-uniffi-v0.29.4`) | Fork-only, the allowed exception | No, by design | Dropped when the SDK moves to UniFFI 0.31 or later and uses upstream releases. |
-| #183 roll back owned arguments | Open, chavic. Approved by reez at `ccc93d6` on 2026-11-17 | Yes, at its head `ccc93d6` | Upstream merge. |
-| #181 wire types in callbacks | Open, chavic. Approved by reez at `325c0ea` on 2026-11-17 | Yes, at its head `325c0ea`, plus one 0.29-only test change (`a2944e7`): a foreign trait returned through Rust comes back as a Rust-backed wrapper on 0.29 | Upstream merge. The test change goes with the port. |
-| #178 `status` argument names | Open, chavic. Approved by DenisovAV at `9573490` on 2026-11-17 | Yes, at its head `9573490`. The merge resolutions with #181 and #183 are what upstream needs too | Upstream merge. |
+| #183 roll back owned arguments | Open, chavic. Approved by reez on 2026-11-17, and the approval carried over when it was rebased onto `304bae0` on 2026-11-20 | Yes, at its head `67d487c`, a rebase of `ccc93d6` with the same patches | Upstream merge. |
+| #181 wire types in callbacks | Open, chavic. Approved by reez on 2026-11-17, and the approval carried over when it was rebased onto `304bae0` on 2026-11-20 | Yes, at its head `8d15f6a` (a rebase of `325c0ea` with the same patches), plus one 0.29-only test change (`a2944e7`): a foreign trait returned through Rust comes back as a Rust-backed wrapper on 0.29 | Upstream merge. The test change goes with the port. |
+| #178 `status` argument names | Open, chavic. Approved by DenisovAV on 2026-11-17, and the approval carried over when it was rebased onto `304bae0` on 2026-11-20 | Yes, at its head `7b74171`, a rebase of `9573490` with the same patches. The merge resolutions with #181 and #183 are what upstream needs too | Upstream merge. |
 | #196 `Error` inside type names | Open, ThoreKoritzius | Yes, at its head `de8675a`. It was force-pushed from `c356e4f` with 112 more fixture lines and the same generator change | Upstream merge. |
 | `savage-fix-enum-field-error-names` | Ours. Superseded by #196, not to be PR'd | Nothing of it is left: its code change is identical to #196's, and its fixture was removed (`df4ea33`), so the fork carries #196 as it stands | Nothing to converge. |
-| #190 fixed-width handles | Open, chavic. Approved by reez at `41e82ed` on 2026-11-17 | **No: partial.** Only the Rust-future part (`Uint64` future handles), adapted in `b3c33dd` from #190's head `41e82ed`. Its object-handle parts don't apply, since 0.29 passes objects as pointers. After its main commit `ca8b7ac`, #190 is test-only apart from `ce4fb6b`'s `Handle` field annotation, which the adaptation includes | Take #190 unchanged once the port goes. |
+| #190 fixed-width handles | Open, chavic. Approved by reez on 2026-11-17, and the approval carried over when it was rebased onto `304bae0` on 2026-11-20 | **No: partial.** Only the Rust-future part (`Uint64` future handles), adapted in `b3c33dd` from #190's head `41e82ed`. Its current head `697036b` is a rebase with the same patches, so the adaptation stands. Its object-handle parts don't apply, since 0.29 passes objects as pointers. After its main commit `ca8b7ac`, #190 is test-only apart from `ce4fb6b`'s `Handle` field annotation, which the adaptation includes | Take #190 unchanged once the port goes. |
 | #188 u64 as `BigInt` | Open draft, chavic | Yes, at its head `f0b7a21`, plus the local fix in the next row. The merge moves #183's tests to `BigInt` | Upstream merge. |
 | `savage-u64-callback-results-bigint-on-0.29` | Local fix on top of #188 (`2d694b9`, on #188's head `f0b7a21`). Suggested on #188 (comment by dangeross, 2026-11-17), but not part of it | **No.** #188 types u64 callback results as `Object`, so implementers lose type checking. This types them as `BigInt` (`Future<BigInt>` when async). #188's own commits are untouched | If #188 adopts the suggestion: take #188's new head and drop this branch. If #188 rejects it: this becomes fork-only, which the rule above doesn't allow, so revert the merge. Dart callbacks that return `BigInt` keep compiling against `Object`, so the SDK needs no change for the revert. |
 | #186 opt-in callback dispatch | Merged upstream | Yes (in the base), as changed by `savage-callback-relay`: its runtime is shared with the relay, and it wakes the isolate through a port | Already upstream; the changes go up with the relay PR. |
@@ -112,6 +113,7 @@ moves to the merged table and becomes part of the base.
 | `savage-callback-relay-on-0.29` (third time) | port | Several isolates per callback type (Ross approved, 2026-11-19, folded into the relay PR rather than a stacked one). With the relay bundled, callback handles come from the relay, which records each handle's owning isolate. Every call goes to that isolate's inline vtable, so two isolates can implement the same interface, for example the app and a push-notification handler, and an exited isolate's handles fail or drop at its own endpoint instead of reaching a new isolate. The owner-thread check also compares the isolate's main port, since a new isolate can reuse an exited one's address. Relay branch commits `7c95511` and `0c874b6`, cherry-picked onto the port. Without the relay, the last isolate to install a type still gets every call. |
 | `savage-native-finalizers-on-0.29` | `savage-callback-relay-on-0.29` | Ours, from `savage-native-finalizers` (upstream main, upstreamable, stacked on the relay PR, approved by Ross on 2026-11-19). With the relay bundled, generated objects free their Rust side from a `NativeFinalizer`. The companion's per-type shim only queues the object, and the companion's own thread calls the UniFFI free, since a finalizer must not call into the Dart VM and a `Drop` can. So the objects of an exited isolate (hot restart, `Isolate.run`) are freed, and with the SDK's shutdown guard an orphaned SDK stops. Generation writes the companion for components with objects too, and objects implement `Finalizable`. Without the relay, a `Finalizer` as before. |
 | `savage-native-finalizers-on-0.29` (again) | `savage-callback-relay-on-0.29` | The SDK's hot-restart soak found orphans that kept running when a call was in flight: an async call's Rust future holds its receiver until Dart frees it, which a dead isolate never does. Each async call now attaches a `NativeFinalizer` for its future to a `Finalizable` token, through a companion shim for each kind of future free that the component's async calls use, and detaches it before the normal free. If the isolate dies first, the companion's free thread frees the future, which cancels it and drops the receiver. Upstream branch commit `b83f012`, cherry-picked onto the port. The merge here builds the finalizer token from #190's integer future handle. |
+| `upstream-pr-178`, `savage-pr-181-on-0.29`, `upstream-pr-183` (again) | upstream main, port, upstream main | chavic rebased #178, #181, #183 and #190 onto upstream main at `304bae0` on 2026-11-20, with the same patches. The merges record the new heads without changing the tree. #178 and #183 merge with `-s ours`, since this branch already has their patches and `304bae0`, and a content merge would conflict with later changes to their lines. #181's port branch merges its new head for real, bringing #197 and keeping `a2944e7`'s 0.29 test. #190's adaptation is unchanged. |
 
 ## Not taken
 
