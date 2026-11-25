@@ -12,6 +12,10 @@ use genco::prelude::*;
 ///
 /// `discriminator` goes into the hash first. Enum variants pass their index,
 /// so variants with equal field values don't share a hash.
+///
+/// The members name no types: Dart infers `bool operator ==(Object other)`
+/// and `int get hashCode` from `Object`. A UniFFI type named `Object`, or a
+/// field named `bool` or `int`, would otherwise shadow the `dart:core` type.
 pub fn value_equality(
     cls_name: &str,
     field_names: &[String],
@@ -31,24 +35,19 @@ pub fn value_equality(
         )
         .collect::<Vec<_>>()
         .join(" && ");
-    let hashes = discriminator
+    let hashed = discriminator
         .map(|d| d.to_string())
         .into_iter()
-        .chain(field_names.iter().map(|name| format!("uniffiDeepHash({})", own(name))))
+        .chain(field_names.iter().map(own))
         .collect::<Vec<_>>()
         .join(", ");
 
     quote! {
         @override
-        bool operator ==(Object other) {
-            if (identical(this, other)) {
-                return true;
-            }
-            return $equal;
-        }
+        operator ==(other) => $equal;
 
         @override
-        int get hashCode => Object.hashAll(<Object?>[$hashes]);
+        get hashCode => uniffiDeepHash([$hashed]);
     }
 }
 
