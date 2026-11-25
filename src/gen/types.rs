@@ -7,7 +7,7 @@ use uniffi_bindgen::ComponentInterface;
 
 use super::oracle::AsCodeType;
 use super::render::{AsRenderable, Renderable, Renderer, TypeHelperRenderer};
-use super::{enums, functions, objects, primitives, records};
+use super::{enums, equality, functions, objects, primitives, records};
 use crate::gen::oracle::DartCodeOracle;
 
 type FunctionDefinition = dart::Tokens;
@@ -469,6 +469,8 @@ pub fn runtime_scaffolding(ci: &ComponentInterface) -> dart::Tokens {
                 calloc.free(data);
                 }
             }
+
+            $(equality::runtime_helpers())
 
             class LiftRetVal<T> {
                 final T value;
