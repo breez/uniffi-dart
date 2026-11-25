@@ -3,6 +3,7 @@ use uniffi_bindgen::interface::{AsType, Record, Type};
 use uniffi_bindgen::pipeline::general::nodes::Literal as PipelineLiteral;
 
 use super::defaults::{configured_custom_default, render_default_value};
+use super::equality::value_equality;
 use super::oracle::{AsCodeType, DartCodeOracle};
 use super::render::{Renderable, TypeHelperRenderer};
 use super::types::generate_type;
@@ -103,11 +104,16 @@ pub fn generate_record(obj: &Record, type_helper: &dyn TypeHelperRenderer) -> da
     for f in obj.fields() {
         type_helper.include_once_check(&f.as_codetype().canonical_name(), &f.as_type());
     }
+    let field_names: Vec<String> =
+        obj.fields().iter().map(|f| DartCodeOracle::var_name(f.name())).collect();
+    let equality = value_equality(cls_name, &field_names, None);
     quote! {
         class $cls_name {
             $(for f in obj.fields() => final $(generate_type(&f.as_type())) $(DartCodeOracle::var_name(f.name()));)
 
             $constructor
+
+            $equality
         }
 
         class $ffi_conv_name {

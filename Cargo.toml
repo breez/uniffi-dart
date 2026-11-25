@@ -94,6 +94,7 @@ members = [
     "fixtures/proc-macro",
     "fixtures/proc-macro-no-implicit-prelude",
     "fixtures/enum_variant_collision",
+    "fixtures/value-equality",
     #"fixtures/*",
 ]
 
