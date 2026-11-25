@@ -21,6 +21,7 @@ mod custom;
 mod defaults;
 mod dispatch;
 mod enums;
+mod equality;
 mod functions;
 mod objects;
 mod oracle;

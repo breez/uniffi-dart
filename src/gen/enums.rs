@@ -3,6 +3,7 @@ use heck::ToLowerCamelCase;
 use uniffi_bindgen::interface::{AsType, Enum, Field};
 use uniffi_bindgen::pipeline::general::nodes::Literal;
 
+use super::equality::value_equality;
 use super::oracle::{AsCodeType, DartCodeOracle};
 use super::render::{AsRenderable, Renderable, TypeHelperRenderer};
 use crate::gen::CodeType;
@@ -266,6 +267,14 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
                     quote!()
                 };
 
+            let field_names: Vec<String> = variant_obj
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(i, field)| field_name(field, i))
+                .collect();
+            let equality = value_equality(variant_dart_cls_name, &field_names, Some(index + 1));
+
             variants.push(quote!{
                 class $variant_dart_cls_name extends $dart_cls_name {
                     $(for (i, field) in variant_obj.fields().iter().enumerate() => final $(field_type(field, type_helper)) $(field_name(field, i));  )
@@ -308,6 +317,8 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
                     }
 
                     $to_string_method
+
+                    $equality
                 }
             });
         }
