@@ -102,6 +102,39 @@ void main() {
       defaultObject.dispose();
     });
 
+    // Enums with fields are sealed, so these switches compile without a
+    // default only because they cover every variant.
+    test('switches over enums with fields are exhaustive', () {
+      String describe(MixedEnum value) => switch (value) {
+            NoneMixedEnum() => 'none',
+            StringMixedEnum(:final v0) => 'string $v0',
+            IntMixedEnum(:final v0) => 'int $v0',
+            BothMixedEnum(:final v0, :final v1) => 'both $v0 $v1',
+          };
+      expect(describe(NoneMixedEnum()), 'none');
+      expect(describe(StringMixedEnum('s')), 'string s');
+      expect(describe(IntMixedEnum(3)), 'int 3');
+      expect(describe(BothMixedEnum(v0: 's', v1: 3)), 'both s 3');
+
+      String reason(BasicException error) {
+        switch (error) {
+          case InvalidInputBasicException():
+            return 'invalid input';
+          case OsExceptionBasicException():
+            return 'os error';
+          case UnexpectedExceptionBasicException(:final reason):
+            return reason;
+        }
+      }
+
+      try {
+        alwaysFails();
+        fail('alwaysFails should throw');
+      } on BasicException catch (error) {
+        expect(reason(error), 'os error');
+      }
+    });
+
     test('callback interfaces', () {
       final callback = DartTestCallback();
 
