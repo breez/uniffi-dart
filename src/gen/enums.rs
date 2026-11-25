@@ -335,8 +335,10 @@ pub fn generate_enum(obj: &Enum, type_helper: &dyn TypeHelperRenderer) -> dart::
             quote!()
         };
 
+        // Sealed, so a switch over the variant classes is checked for
+        // exhaustiveness, as with Dart's own enums for the flat case above.
         quote! {
-            abstract class $dart_cls_name $implements_exception {
+            sealed class $dart_cls_name $implements_exception {
                 RustBuffer lower();
                 int allocationSize();
                 int write( Uint8List buf);
